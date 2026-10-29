@@ -58,6 +58,18 @@ HEXAPOD_CFG = ArticulationCfg(
 
 
 @configclass
+class SceneCfg(InteractiveSceneCfg):
+    light = AssetBaseCfg(prim_path="/World/light", spawn=sim_utils.DomeLightCfg(intensity=3000, color=(0.75, 0.75, 0.75)))
+    ground = AssetBaseCfg(prim_path="/World/ground", spawn=sim_utils.GroundPlaneCfg())
+    robot = HEXAPOD_CFG
+    contact_forces = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        history_length=3,
+        track_air_time=True,
+    )
+
+
+@configclass
 class ActionsCfg:
     joint_pos = mdp.JointPositionActionCfg(
         asset_name="robot", joint_names=[".*"], use_default_offset=True,
