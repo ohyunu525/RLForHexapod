@@ -33,6 +33,12 @@ def feet_stumble(env, sensor_cfg: SceneEntityCfg, ratio: float = 4.0) -> torch.T
     return torch.any(hit, dim=1).float()
 
 
+def feet_long_air_time(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.5) -> torch.Tensor:
+    """발이 threshold(초)보다 오래 떠 있으면 넘은 시간만큼 벌점 (공중에서 흔들리는 다리 억제)."""
+    air = env.scene.sensors[sensor_cfg.name].data.current_air_time.torch[:, sensor_cfg.body_ids]
+    return torch.sum(torch.clamp(air - threshold, min=0.0), dim=1)
+
+
 class feet_clearance(ManagerTermBase):
     """스윙 중인 발끝을 target_height까지 높이 들수록 보상 (가장 낮은 발 기준 높이)."""
 

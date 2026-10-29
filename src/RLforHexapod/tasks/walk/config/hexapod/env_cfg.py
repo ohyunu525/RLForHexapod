@@ -142,7 +142,7 @@ class CommandCfg:
         heading_command=True,
         heading_control_stiffness=0.5,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.5),
+            lin_vel_x=(0.0, 0.2),
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.5, 0.5),
             heading=(0, 0),
@@ -220,6 +220,11 @@ class StairsRewardsCfg:
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-7)
+    joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-1e-3)
+    joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
+    # 중간·뒷다리만 (앞발 들기 phase 방해 X)
+    feet_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
+        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_3", "tibia_4", "tibia_5"])})
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs"]})  # 성공 제외
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=5.0, params={
