@@ -1,116 +1,64 @@
-# RLforHexapod
+말씀하신 3개에 빠진 것들을 더해서, 의존 관계 순서대로 정리했습니다. **★**가 새로 추가한 항목입니다.
 
-An installable downstream Isaac Lab task package with a standard uv `src` layout.
+## A. 계단 teacher 만들기
 
-No tasks are registered yet. Add task packages under `src/RLforHexapod/tasks` and register them with Gymnasium.
+**1. 계단 정보 관측 (특권 정보)**
+- teacher actor와 critic에 계단까지 x 거리, 다음 단 높이, 발 밑 지형 높이 등을 넣습니다.
+- ★ **체크포인트 호환 문제:** 관측이 늘면 신경망 입력 크기가 바뀌어서 **걷기 체크포인트를 그대로 불러올 수 없습니다.** 걷기 task에도 같은 관측 항목을 넣고(평지면 0 같은 값) 다시 학습하든지, 계단 teacher는 처음부터 학습하든지 정해야 합니다.
 
+**2. 진행 플래그**
+- 앞다리가 1단에 닿음, 몸통이 1단 높이 이상, 뒷다리까지 1단 위, 꼭대기 도달 같은 플래그를 만듭니다.
+- 한 번 켜지면 에피소드 동안 유지되고(latch), 리셋 때 꺼집니다.
+- 이 플래그도 관측에 넣습니다. 정책이 지금 어느 단계인지 알 수 있게 하기 위해서입니다.
 
-## Installation
+**3. 플래그 기반 보상**
+- 플래그가 처음 켜질 때 한 번 주는 보너스(milestone)와, 꼭대기에 도달했을 때의 성공 보너스를 만듭니다.
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then create the project environment. The default
-environment uses the Newton backend and does not install Isaac Sim:
+**4. ★ 리셋 시작점 커리큘럼** (SO101의 핵심)
+- 계단 앞, 앞다리만 1단 위, 몸 전체 1단 위, 2단 앞 등 단계별 시작 자세를 만들어 무작위로 시작시킵니다.
+- 시작 높이를 그 위치의 계단 높이에 맞춰야 로봇이 계단에 박히거나 공중에서 떨어지지 않습니다.
+- 시작 단계에 맞는 플래그도 함께 켜서 시작해야 합니다.
 
-```bash
-uv sync
-```
+**5. ★ 성공 종료와 성공률 지표**
+- 꼭대기에 도달하면 성공으로 에피소드를 종료합니다.
+- `success_rate`를 로그에 남기고, 평가는 항상 0단계(계단 앞)에서 시작합니다.
 
-This project's `pyproject.toml` uses editable relative paths to an Isaac Lab source checkout. Update
-`[tool.uv.sources]` if either directory moves.
+**6. ★ 계단 높이 커리큘럼**
+- 지금은 160mm 하나로 고정입니다. 40 → 80 → 120 → 160 → 300mm 순으로 올라가야 합니다.
+- **300mm 계단 파일은 아직 없습니다.** 다리 길이가 femur 약 0.10m + tibia 약 0.15m라서, 300mm가 물리적으로 가능한지 먼저 확인이 필요합니다.
 
-The project forwards every optional extra declared by the Isaac Lab package used to create it, including physics,
-rendering, visualizer, RL, teleoperation, and development features. Inspect `pyproject.toml` for the complete list and
-pass each required extra to `uv run`:
+**7. ★ 계단 task 설정 정리**
+- **명령:** heading을 정면 `(0, 0)`으로 고정하고, 정지 명령이 나오지 않게 `lin_vel_x` 하한을 0.1 이상으로 올립니다.
+- **종료 페널티:** `is_terminated`를 추가합니다. 계단 폭 이탈 종료(`off_stairs`)는 이미 추가했습니다.
+- **로그 폴더:** 계단 task가 걷기와 같은 `experiment_name="hexapod_walk"`를 써서 로그가 섞입니다. 계단용 runner 설정을 따로 만들어야 합니다.
 
-```bash
-# Standalone OV PhysX
-uv run --extra ovphysx isaaclab random_agent --task <TASK_NAME> physics=ovphysx
+## B. 기존 코드 정리
 
-# Isaac Sim with PhysX and RTX rendering
-uv run --extra isaacsim isaaclab random_agent --task <TASK_NAME> physics=isaacsim_physx
+**8. ★ 이미 발견한 문제들**
+- `ang_vel_z=(0, 0)`이라 heading 보정이 동작하지 않습니다.
+- `base_height_progress`가 스폰 높이를 기준으로 시작합니다.
+- config 기본 `num_envs=4`입니다. 실행 때 지정하지 않으면 데이터가 너무 적습니다.
+- PPO 설정에 튜토리얼에서 남은 `HexapodCameraPPORunnerCfg`(`vial`, `wrist_rgb`)가 있습니다.
 
-# Isaac Sim with the Rerun visualizer
-uv run --extra isaacsim --extra rerun isaaclab random_agent --task <TASK_NAME> --viz rerun
-```
+## C. student 증류
 
-The `all` extra forwards Isaac Lab's `all` selection. The `ov` extra installs both the `ovphysx` and `ovrtx` runtimes;
-you can also select either independently. Commit `pyproject.toml` and `uv.lock` so collaborators use the same
-environment.
+**9. ★ student 센서 결정 (결정이 필요합니다)**
+- 실제 로봇에 무엇을 달 건지 정해야 합니다. 관절 센서와 IMU만 쓸지, 깊이 카메라나 일반 카메라를 달지에 따라 student 관측과 렌더러 설정이 완전히 달라집니다.
 
-## Run the tasks
+**10. ★ 증류 task와 설정**
+- SO101의 `...-Camera` task처럼 student용 env 설정, `teacher_state` 관측 그룹, 증류 runner 설정, task 등록을 만듭니다.
 
-After registering a task, list it with:
+## D. 실제 로봇 적용 (나중에)
 
-```bash
-uv run isaaclab list_envs --show_presets
-```
+**11. ★ 도메인 랜덤화**
+- 마찰, 질량, 모터 게인, 관측 노이즈, 외부에서 밀기 등을 무작위로 바꿉니다. MG996R 서보 특성도 맞춰야 합니다.
 
-## Project structure
+**12. ★ 검증 절차**
+- 학습 전에 `zero_agent` 스모크 테스트를 돌려 봅니다.
+- 평가 스크립트로 0단계 시작 성공률을 측정합니다.
 
-Add task packages under `src/RLforHexapod/tasks`. Import each task package from that directory so its Gymnasium
-registrations load through the project's `isaaclab.tasks` entry point.
+---
 
-## Project assets
+**바로 시작할 수 있는 순서:** 8 → 7 → 1 → 2·3 → 5 → 4 → 6 → (9 결정) → 10 → 11
 
-Keep project-owned USD files and related data under `src/RLforHexapod/assets/data`. The asset module exposes a
-stable path that works from an editable checkout and an installed wheel:
-
-```python
-from RLforHexapod.assets import RLFORHEXAPOD_ASSETS_DIR
-
-robot_usd_path = RLFORHEXAPOD_ASSETS_DIR / "robots" / "my_robot.usd"
-```
-
-Keep asset configuration in the `RLforHexapod.assets` package and pass `str(robot_usd_path)` to configuration fields that
-expect a string. USD files are configured for Git LFS by the project's `.gitattributes`; install Git LFS before adding
-large binary assets.
-
-## Development
-
-Run the registration test and code-quality checks through the project environment:
-
-```bash
-uv run pytest
-uv run pre-commit run --all-files
-```
-
-The test helpers under `source/isaaclab_tasks/test` in the Isaac Lab repository are not part of the installed
-`isaaclab_tasks` package. Keep test fixtures in this project and use public Isaac Lab APIs. If you copy
-`env_test_utils.py`, it becomes vendored code whose upstream changes you must track.
-
-To configure VS Code or Cursor, run the `setup_python_env` task or invoke its command directly:
-
-```bash
-uv run isaaclab --editor
-```
-
-The setup command selects the active interpreter and writes a git-ignored `pyrightconfig.json`. The resulting
-configuration inherits the project's checked-in Pyright settings and adds the Isaac Sim extensions, project `src` root,
-and any Isaac Lab packages discovered in the active Python environment. This supports both Pylance in VS Code and
-basedpyright in Cursor.
-
-In VS Code, use Pylance and select the interpreter that ran the setup command. In Cursor, install the
-[basedpyright extension](https://marketplace.visualstudio.com/items?itemName=detachhead.basedpyright) instead of
-Pylance, select the same interpreter, and reload the window. Both language servers read `pyrightconfig.json`.
-
-When using the `isaacsim` extra, include it while generating the editor configuration so the command can discover the
-Isaac Sim installation:
-
-```bash
-uv run --extra isaacsim isaaclab --editor
-```
-
-For an Isaac Sim binaries installation that is not available in the project environment, provide its path explicitly:
-
-```bash
-# Linux
-uv run isaaclab --editor --isaac_path <isaac-sim-path>
-
-# Windows
-uv run isaaclab --editor --isaac_path <isaac-sim-path>
-```
-
-## Troubleshooting
-
-If Pylance or basedpyright cannot resolve modules, confirm that the selected interpreter matches the one used to run the
-setup command, then reload the editor window. To add a missing extension or reduce indexing memory, edit the `extraPaths`
-array in the root `pyrightconfig.json`; remove simulator extension directories that the project does not use.
+9번 student 센서는 미리 알려주시면, 1번 관측을 설계할 때 student가 나중에 따라 할 수 있는 형태로 맞출 수 있습니다. 8번부터 바로 진행할까요?
