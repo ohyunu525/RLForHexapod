@@ -31,6 +31,8 @@ def stair_phase_reached(env, phase: int):
 
 def reset_stair_phase(env, env_ids, x_ranges):
     """phase를 랜덤으로 뽑고 그 phase의 시작 x 위치로 로봇을 옮김 (reset_scene_to_default 다음에 실행)."""
+    if isinstance(env_ids, slice):  # 첫 env.reset()은 slice(None)으로 호출됨
+        env_ids = torch.arange(env.num_envs, device=env.device)
     p = torch.randint(len(x_ranges), (len(env_ids),), device=env.device)
     get_phase(env)[env_ids] = p
     lo, hi = torch.tensor(x_ranges, device=env.device)[p].unbind(-1)
