@@ -192,7 +192,7 @@ class StairsSceneCfg(SceneCfg):
 class StairsTerminationsCfg(TerminationsCfg):
     # 몸통 중심이 계단 폭(1.0m, stairs_*.usda의 y scale) 밖으로 나가면 실패
     off_stairs = DoneTerm(func=mdp.out_of_stairs_width, params={"half_width": STAIRS.width/2})
-    success = DoneTerm(func=mdp.stair_phase_reached, params={"phase": 2})
+    success = DoneTerm(func=mdp.stair_phase_reached, params={"phase": mdp.NUM_PHASES})
 
 
 @configclass
@@ -228,8 +228,9 @@ class StairsRewardsCfg:
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs"]})  # 성공 제외
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=3.0, params={
-        "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_6"]),
-        "approach_x": STAIRS.x0 - 0.05, "lift_z": STAIRS.step_height + 0.03})
+        "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
+                                    preserve_order=True),
+        "stairs": STAIRS})
 
 
 @configclass
