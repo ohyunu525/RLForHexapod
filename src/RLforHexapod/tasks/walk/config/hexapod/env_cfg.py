@@ -208,7 +208,7 @@ class StairsRewardsCfg:
                             params={"command_name": "base_velocity", "std": 0.5})
     track_ang_vel = RewTerm(func=mdp.track_ang_vel_z_exp, weight=0.5,
                             params={"command_name": "base_velocity", "std": 0.5})
-    height_progress = RewTerm(func=mdp.base_height_progress, weight=1.5)
+    height_progress = RewTerm(func=mdp.base_height_progress, weight=2.5)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["body", "femur.*", "coxa.*"]),
         "threshold": 1.0})
@@ -227,7 +227,7 @@ class StairsRewardsCfg:
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_3", "tibia_4", "tibia_5"])})
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs"]})  # 성공 제외
-    stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=5.0, params={
+    stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=3.0, params={
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_6"]),
         "approach_x": STAIRS.x0 - 0.05, "lift_z": STAIRS.step_height + 0.03})
 
