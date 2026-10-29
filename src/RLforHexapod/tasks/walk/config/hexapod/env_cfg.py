@@ -142,7 +142,7 @@ class CommandCfg:
         heading_command=True,
         heading_control_stiffness=0.5,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.2),
+            lin_vel_x=(0.0, 0.2),   # 수정해야함.
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.5, 0.5),
             heading=(0, 0),
