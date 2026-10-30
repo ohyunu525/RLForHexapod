@@ -104,7 +104,7 @@ class stair_phase_reward(ManagerTermBase):
         self._env.extras["log"]["Metrics/stair_phase"] = self.last_phase[env_ids].mean()  # 끝난 에피소드의 도달 phase
 
     def __call__(self, env, asset_cfg, stairs, lift: float = 0.03, contact_tol: float = 0.03, bonus: float = 1.0,
-                 hold: float = 1.0, rear_body_fwd: float = 0.5):
+                 hold: float = 1.0, rear_body_fwd: float = 0.5, support: float = 0.5, support_margin: float = 0.05):
         approach_x, lift_z = stairs.x0 - 0.05, stairs.step_height + lift
         tips = feet_tip_pos(env, asset_cfg, self.offset)
         x = tips[:, FRONT, 0].min(dim=1).values.clamp(max=approach_x)  # 두 앞발 중 뒤처진 발
@@ -149,4 +149,7 @@ class stair_phase_reward(ManagerTermBase):
             save_phase_states(env, save.nonzero().squeeze(-1), phase[save])
         # 유지 보상: 완료한 다리 쌍이 단 위에 있으면 매 step
         held = sum(on[:, feet].all(1) * (phase > k) for k, feet in zip((2, 3, 4), (FRONT, MIDDLE, REAR)))
-        return (gain + bonus * done) / env.step_dt + hold * held
+        # phase 4: 몸통(무게중심)이 중간발보다 support_margin 앞 → 뒷발을 들어도 안 넘어짐 (매 step, 상한 1)
+        margin = (bx - tips[:, MIDDLE, 0].mean(1)) / support_margin
+        stable = margin.clamp(0.0, 1.0) * (phase == 4)
+        return (gain + bonus * done) / env.step_dt + hold * held + support * stable

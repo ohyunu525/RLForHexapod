@@ -192,7 +192,6 @@ class StairsSceneCfg(SceneCfg):
 class StairsTerminationsCfg(TerminationsCfg):
     # 몸통 중심이 계단 폭(1.0m, stairs_*.usda의 y scale) 밖으로 나가면 실패
     off_stairs = DoneTerm(func=mdp.out_of_stairs_width, params={"half_width": STAIRS.width/2})
-    success = DoneTerm(func=mdp.stair_phase_reached, params={"phase": mdp.NUM_PHASES})
     sim_blowup = DoneTerm(func=mdp.joint_vel_out_of_manual_limit, params={"max_velocity": 50.0})
 
 
@@ -224,9 +223,9 @@ class StairsRewardsCfg:
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-7)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-1e-3)
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    # 중간·뒷다리만 (앞발 들기 phase 방해 X)
+    # 중간다리만 (앞발 들기·뒷발 옮기기 phase 방해 X)
     feet_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_3", "tibia_4", "tibia_5"])})
+        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"])})
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup"]})  # 성공 제외
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=3.0, params={
