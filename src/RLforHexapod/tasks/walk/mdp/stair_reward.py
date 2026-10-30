@@ -84,7 +84,7 @@ def reset_stair_phase(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
 
 class stair_phase_reward(ManagerTermBase):
     """최고기록 갱신량 보상 + phase 완료 시 bonus 1회.
-    0: 앞발 x, 1: 앞발 높이, 2/3/4: 앞/중간/뒷발 높이 + 몸통 x."""
+    0: 앞발 x, 1: 앞발 높이, 2/3: 앞/중간발 높이 + 몸통 x, 4: 뒷발 높이 + 뒷발 x."""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -93,6 +93,7 @@ class stair_phase_reward(ManagerTermBase):
         self.offset = tip_offsets([names[i] for i in asset_cfg.body_ids], env.device)
         self.best_x = torch.zeros(env.num_envs, device=env.device)
         self.best_bx = torch.zeros(env.num_envs, device=env.device)
+        self.best_rx = torch.zeros(env.num_envs, device=env.device)
         self.best_z = torch.zeros(env.num_envs, len(asset_cfg.body_ids), device=env.device)
         self.need_init = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
         self.last_phase = torch.zeros(env.num_envs, device=env.device)
@@ -109,31 +110,37 @@ class stair_phase_reward(ManagerTermBase):
         x = tips[:, FRONT, 0].min(dim=1).values.clamp(max=approach_x)  # 두 앞발 중 뒤처진 발
         z = tips[..., 2].clamp(max=lift_z)
         bx = env.scene[asset_cfg.name].data.root_pos_w.torch[:, 0] - env.scene.env_origins[:, 0]
+        rx = tips[:, REAR, 0].min(dim=1).values.clamp(max=stairs.x0 + 0.05)  # 두 뒷발 중 뒤처진 발 (단 위 5cm까지)
         # 1단 이상을 딛고 있음: 발 아래 지형 ≥ 단 높이, 지형 위 contact_tol 이내
         terrain = stairs_terrain_height(stairs, tips[..., 0], tips[..., 1])
         on = (terrain >= stairs.step_height - 1e-3) & (tips[..., 2] - terrain < contact_tol)
 
         self.best_x = torch.where(self.need_init, x, self.best_x)
         self.best_bx = torch.where(self.need_init, bx, self.best_bx)
+        self.best_rx = torch.where(self.need_init, rx, self.best_rx)
         self.best_z = torch.where(self.need_init.unsqueeze(1), z, self.best_z)
         self.need_init[:] = False
         gx = (x - self.best_x).clamp(min=0)
         gbx = (bx - self.best_bx).clamp(min=0)
+        grx = (rx - self.best_rx).clamp(min=0)
         gz = (z - self.best_z).clamp(min=0)
         self.best_x = torch.maximum(self.best_x, x)
         self.best_bx = torch.maximum(self.best_bx, bx)
+        self.best_rx = torch.maximum(self.best_rx, rx)
         self.best_z = torch.maximum(self.best_z, z)
 
         phase = get_phase(env)
         gain = gx * (phase == 0) + gz[:, FRONT].sum(1) * (phase == 1)
         done = ((phase == 0) & (self.best_x >= approach_x)) | ((phase == 1) & (self.best_z[:, FRONT] >= lift_z).all(1))
-        for k, feet in zip((2, 3, 4), (FRONT, MIDDLE, REAR)):
-            gain += (gz[:, feet].sum(1) + gbx) * (phase == k)
+        # 앞/중간발은 몸통 x, 뒷발은 뒷발 x (몸을 밀지 않고 다리를 접어 6발을 한 단에)
+        for k, feet, gfwd in zip((2, 3, 4), (FRONT, MIDDLE, REAR), (gbx, gbx, grx)):
+            gain += (gz[:, feet].sum(1) + gfwd) * (phase == k)
             done |= (phase == k) & on[:, feet].all(1)
 
         # 새 phase는 지금부터 다시 기록
         self.best_z[done] = z[done]
         self.best_bx[done] = bx[done]
+        self.best_rx[done] = rx[done]
         phase += done.long()
         self.last_phase = phase.float()
         # phase 2~4에 막 들어선 상태 저장 → 리셋 때 시작 상태로 사용
