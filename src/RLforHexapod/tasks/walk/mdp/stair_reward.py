@@ -33,18 +33,53 @@ def stair_phase_reached(env, phase: int):
     return get_phase(env) >= phase
 
 
-def reset_stair_phase(env, env_ids, x_ranges):
-    """phase를 랜덤으로 뽑고 그 phase의 시작 x 위치로 로봇을 옮김 (reset_scene_to_default 다음에 실행)."""
+def save_phase_states(env, env_ids, phases, size: int = 1000):
+    """env_ids의 현재 상태를 phase별 버퍼에 추가 (위치는 env 원점 기준, 꽉 차면 오래된 것부터 버림)."""
+    if not hasattr(env, "stair_states"):
+        env.stair_states = {}
+    d = env.scene["robot"].data
+    pose = d.root_pose_w.torch[env_ids].clone()
+    pose[:, :3] -= env.scene.env_origins[env_ids]
+    s = torch.cat([pose, d.root_vel_w.torch[env_ids], d.joint_pos.torch[env_ids], d.joint_vel.torch[env_ids]], 1)
+    for k in phases.unique().tolist():
+        env.stair_states[k] = torch.cat([env.stair_states.get(k, s[:0]), s[phases == k]])[-size:]
+
+
+def reset_stair_phase(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
+    """시작 phase를 뽑아 그 시작 상태로 옮김 (reset_scene_to_default 다음에 실행).
+    phase 0/1: 기본 자세 + x_ranges 위치, buffer_ratio 비율로 phase 2~4: 저장된 상태 (비어 있으면 phase 0)."""
     if isinstance(env_ids, slice):  # 첫 env.reset()은 slice(None)으로 호출됨
         env_ids = torch.arange(env.num_envs, device=env.device)
-    p = torch.randint(len(x_ranges), (len(env_ids),), device=env.device)
+    n, buf = len(env_ids), getattr(env, "stair_states", {})
+    p = torch.randint(len(x_ranges), (n,), device=env.device)
+    use_buf = torch.rand(n, device=env.device) < buffer_ratio
+    p = torch.where(use_buf, torch.randint(len(x_ranges), NUM_PHASES, (n,), device=env.device), p)
+    for k in range(len(x_ranges), NUM_PHASES):
+        if k not in buf:
+            p[p == k] = 0
     get_phase(env)[env_ids] = p
-    lo, hi = torch.tensor(x_ranges, device=env.device)[p].unbind(-1)
     asset = env.scene["robot"]
-    pose = asset.data.default_root_pose.torch[env_ids].clone()
-    pose[:, :3] += env.scene.env_origins[env_ids]
-    pose[:, 0] += lo + (hi - lo) * torch.rand(len(env_ids), device=env.device)
-    asset.write_root_pose_to_sim_index(root_pose=pose, env_ids=env_ids)
+
+    hand = p < len(x_ranges)
+    ids = env_ids[hand]
+    if len(ids):
+        lo, hi = torch.tensor(x_ranges, device=env.device)[p[hand]].unbind(-1)
+        pose = asset.data.default_root_pose.torch[ids].clone()
+        pose[:, :3] += env.scene.env_origins[ids]
+        pose[:, 0] += lo + (hi - lo) * torch.rand(len(ids), device=env.device)
+        asset.write_root_pose_to_sim_index(root_pose=pose, env_ids=ids)
+
+    J = asset.num_joints
+    for k, states in buf.items():
+        ids = env_ids[p == k]
+        if len(ids) == 0:
+            continue
+        s = states[torch.randint(len(states), (len(ids),), device=env.device)]
+        s[:, :3] += env.scene.env_origins[ids]
+        asset.write_root_pose_to_sim_index(root_pose=s[:, :7], env_ids=ids)
+        asset.write_root_velocity_to_sim_index(root_velocity=s[:, 7:13], env_ids=ids)
+        asset.write_joint_position_to_sim_index(position=s[:, 13:13 + J], env_ids=ids)
+        asset.write_joint_velocity_to_sim_index(velocity=s[:, 13 + J:], env_ids=ids)
 
 
 class stair_phase_reward(ManagerTermBase):
@@ -101,6 +136,10 @@ class stair_phase_reward(ManagerTermBase):
         self.best_bx[done] = bx[done]
         phase += done.long()
         self.last_phase = phase.float()
+        # phase 2~4에 막 들어선 상태 저장 → 리셋 때 시작 상태로 사용
+        save = done & (phase >= 2) & (phase < NUM_PHASES)
+        if save.any():
+            save_phase_states(env, save.nonzero().squeeze(-1), phase[save])
         # 유지 보상: 완료한 다리 쌍이 단 위에 있으면 매 step
         held = sum(on[:, feet].all(1) * (phase > k) for k, feet in zip((2, 3, 4), (FRONT, MIDDLE, REAR)))
         return (gain + bonus * done) / env.step_dt + hold * held
