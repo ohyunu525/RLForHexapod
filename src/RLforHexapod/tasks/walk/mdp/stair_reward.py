@@ -60,11 +60,15 @@ class stair_phase_reward(ManagerTermBase):
         self.best_bx = torch.zeros(env.num_envs, device=env.device)
         self.best_z = torch.zeros(env.num_envs, len(asset_cfg.body_ids), device=env.device)
         self.need_init = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
+        self.last_phase = torch.zeros(env.num_envs, device=env.device)
 
     def reset(self, env_ids=None):
-        self.need_init[slice(None) if env_ids is None else env_ids] = True
+        env_ids = slice(None) if env_ids is None else env_ids
+        self.need_init[env_ids] = True
+        self._env.extras["log"]["Metrics/stair_phase"] = self.last_phase[env_ids].mean()  # 끝난 에피소드의 도달 phase
 
-    def __call__(self, env, asset_cfg, stairs, lift: float = 0.03, contact_tol: float = 0.03, bonus: float = 1.0):
+    def __call__(self, env, asset_cfg, stairs, lift: float = 0.03, contact_tol: float = 0.03, bonus: float = 1.0,
+                 hold: float = 1.0):
         approach_x, lift_z = stairs.x0 - 0.05, stairs.step_height + lift
         tips = feet_tip_pos(env, asset_cfg, self.offset)
         x = tips[:, FRONT, 0].min(dim=1).values.clamp(max=approach_x)  # 두 앞발 중 뒤처진 발
@@ -96,4 +100,7 @@ class stair_phase_reward(ManagerTermBase):
         self.best_z[done] = z[done]
         self.best_bx[done] = bx[done]
         phase += done.long()
-        return (gain + bonus * done) / env.step_dt
+        self.last_phase = phase.float()
+        # 유지 보상: 완료한 다리 쌍이 단 위에 있으면 매 step
+        held = sum(on[:, feet].all(1) * (phase > k) for k, feet in zip((2, 3, 4), (FRONT, MIDDLE, REAR)))
+        return (gain + bonus * done) / env.step_dt + hold * held
