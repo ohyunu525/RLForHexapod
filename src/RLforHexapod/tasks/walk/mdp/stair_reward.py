@@ -84,7 +84,7 @@ def reset_stair_phase(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
 
 class stair_phase_reward(ManagerTermBase):
     """최고기록 갱신량 보상 + phase 완료 시 bonus 1회.
-    0: 앞발 x, 1: 앞발 높이, 2/3: 앞/중간발 높이 + 몸통 x, 4: 뒷발 높이 + 뒷발 x."""
+    0: 앞발 x, 1: 앞발 높이, 2/3: 앞/중간발 높이 + 몸통 x, 4: 뒷발 높이 + 뒷발 x + 몸통 x."""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -104,7 +104,7 @@ class stair_phase_reward(ManagerTermBase):
         self._env.extras["log"]["Metrics/stair_phase"] = self.last_phase[env_ids].mean()  # 끝난 에피소드의 도달 phase
 
     def __call__(self, env, asset_cfg, stairs, lift: float = 0.03, contact_tol: float = 0.03, bonus: float = 1.0,
-                 hold: float = 1.0):
+                 hold: float = 1.0, rear_body_fwd: float = 0.5):
         approach_x, lift_z = stairs.x0 - 0.05, stairs.step_height + lift
         tips = feet_tip_pos(env, asset_cfg, self.offset)
         x = tips[:, FRONT, 0].min(dim=1).values.clamp(max=approach_x)  # 두 앞발 중 뒤처진 발
@@ -132,8 +132,8 @@ class stair_phase_reward(ManagerTermBase):
         phase = get_phase(env)
         gain = gx * (phase == 0) + gz[:, FRONT].sum(1) * (phase == 1)
         done = ((phase == 0) & (self.best_x >= approach_x)) | ((phase == 1) & (self.best_z[:, FRONT] >= lift_z).all(1))
-        # 앞/중간발은 몸통 x, 뒷발은 뒷발 x (몸을 밀지 않고 다리를 접어 6발을 한 단에)
-        for k, feet, gfwd in zip((2, 3, 4), (FRONT, MIDDLE, REAR), (gbx, gbx, grx)):
+        # 앞/중간발은 몸통 x, 뒷발은 뒷발 x + 몸통 x × rear_body_fwd (몸을 단 안쪽으로)
+        for k, feet, gfwd in zip((2, 3, 4), (FRONT, MIDDLE, REAR), (gbx, gbx, grx + rear_body_fwd * gbx)):
             gain += (gz[:, feet].sum(1) + gfwd) * (phase == k)
             done |= (phase == k) & on[:, feet].all(1)
 
