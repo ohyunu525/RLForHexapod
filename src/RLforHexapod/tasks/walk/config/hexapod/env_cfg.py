@@ -70,6 +70,14 @@ class SceneCfg(InteractiveSceneCfg):
 
 
 @configclass
+class ActionsCfg:
+    joint_pos = mdp.JointPositionActionCfg(
+        asset_name="robot", joint_names=[".*"], use_default_offset=True,
+        scale={".*_coxa":0.5, ".*_femur": 1.0, ".*_tibia": 1.0}, 
+    )
+
+
+@configclass
 class ObservationsCfg:
     # ObservationsCfg 안에는 ObsGroup만이 들어갈 수 있다고 한다.
     # 같은 task 내에서 ObsGroup을 바꿔 껴서 쉽게 할 수 있도록 했다.
@@ -134,7 +142,7 @@ class CommandCfg:
         heading_command=True,
         heading_control_stiffness=0.5,
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.2),
+            lin_vel_x=(0.0, 0.2),   # 수정해야함.
             lin_vel_y=(0.0, 0.0),
             ang_vel_z=(-0.5, 0.5),
             heading=(0, 0),
@@ -220,12 +228,16 @@ class StairsRewardsCfg:
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"])})
     rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]), "skip_phases": (5, 6)})
-    termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
+    termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-90.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup"]})  # 성공 제외
-    stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=3.0, params={
+    stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=6.0, params={
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
                                     preserve_order=True),
+<<<<<<< HEAD
         "stairs": STAIRS, "lift": 0.05})
+=======
+        "stairs": STAIRS, "bonus": 20.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "lift": 0.3})
+>>>>>>> 3ff3358636a63d87b2a47a08300187e99b4c2181
 
 
 @configclass
