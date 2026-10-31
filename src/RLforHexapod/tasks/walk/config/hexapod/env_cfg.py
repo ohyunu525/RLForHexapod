@@ -223,9 +223,9 @@ class StairsRewardsCfg:
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-7)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-1e-3)
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    # 중간다리: 중간발 phase(3, 4)에서만 끔, 뒷다리: 뒷발 phase(5, 6)에서만 끔
+    # 중간다리: 항상 켬 (들었으면 내려놓게), 뒷다리: 뒷발 phase(5, 6)에서만 끔
     feet_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"]), "skip_phases": (3, 4)})
+        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"])})
     rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]), "skip_phases": (5, 6)})
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
