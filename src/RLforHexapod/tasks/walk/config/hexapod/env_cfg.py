@@ -181,7 +181,7 @@ STAIRS = mdp.StairsGeometryCfg(x0=0.5, step_height=0.16)
 @configclass
 class StairsSceneCfg(SceneCfg):
     stairs = AssetBaseCfg(
-        prim_path="{ENV_REGEX_NS}/Stairs",          # env마다 복제됨
+        prim_path="{ENV_REGEX_NS}/Stairs",
         spawn=sim_utils.UsdFileCfg(
             usd_path=str(OBSTACLES_DIR / f"stairs_{round(STAIRS.step_height * 1000)}mm.usda")),
         init_state=AssetBaseCfg.InitialStateCfg(pos=(STAIRS.x0, 0.0, 0.0)),  # 로봇 앞 0.5m
@@ -223,9 +223,11 @@ class StairsRewardsCfg:
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-7)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-1e-3)
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    # 중간다리만 (앞발 들기·뒷발 옮기기 phase 방해 X)
+    # 중간다리: 항상, 뒷다리: 뒷발 옮기는 phase 4에서만 끔 (앞발 들기 phase 방해 X)
     feet_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"])})
+    rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
+        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]), "skip_phase": 4})
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup"]})  # 성공 제외
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=3.0, params={

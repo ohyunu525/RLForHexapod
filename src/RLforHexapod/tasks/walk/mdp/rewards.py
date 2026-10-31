@@ -3,6 +3,7 @@ from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.utils.math import quat_apply
 
 from .observations import tip_offsets
+from .stair_reward import get_phase
 
 
 class base_height_progress(ManagerTermBase):
@@ -33,10 +34,13 @@ def feet_stumble(env, sensor_cfg: SceneEntityCfg, ratio: float = 4.0) -> torch.T
     return torch.any(hit, dim=1).float()
 
 
-def feet_long_air_time(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.5) -> torch.Tensor:
-    """발이 threshold(초)보다 오래 떠 있으면 넘은 시간만큼 벌점 (공중에서 흔들리는 다리 억제)."""
+def feet_long_air_time(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.5, skip_phase: int | None = None) -> torch.Tensor:
+    """발이 threshold(초)보다 오래 떠 있으면 넘은 시간만큼 벌점 (공중에서 흔들리는 다리 억제). skip_phase에서는 끔."""
     air = env.scene.sensors[sensor_cfg.name].data.current_air_time.torch[:, sensor_cfg.body_ids]
-    return torch.sum(torch.clamp(air - threshold, min=0.0), dim=1)
+    penalty = torch.sum(torch.clamp(air - threshold, min=0.0), dim=1)
+    if skip_phase is not None:
+        penalty *= get_phase(env) != skip_phase
+    return penalty
 
 
 class feet_clearance(ManagerTermBase):
