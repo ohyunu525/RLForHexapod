@@ -228,12 +228,12 @@ class StairsRewardsCfg:
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"])})
     rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]), "skip_phases": (5, 6)})
-    termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-10.0,
+    termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-90.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup"]})  # 성공 제외
-    stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=3.0, params={
+    stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=6.0, params={
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
                                     preserve_order=True),
-        "stairs": STAIRS})
+        "stairs": STAIRS, "bonus": 20.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "lift": 0.3})
 
 
 @configclass
