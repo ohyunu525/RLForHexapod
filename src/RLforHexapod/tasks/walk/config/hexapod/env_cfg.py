@@ -225,7 +225,7 @@ class StairsRewardsCfg:
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=3.0, params={
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
                                     preserve_order=True),
-        "stairs": STAIRS})
+        "stairs": STAIRS, "lift": 0.05})
 
 
 @configclass

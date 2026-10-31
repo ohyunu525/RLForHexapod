@@ -167,4 +167,5 @@ class stair_phase_reward(ManagerTermBase):
         stable = margin.clamp(0.0, 1.0) * (phase >= NUM_PHASES - 2) * (phase < NUM_PHASES)
         # 몸통 전진: 앞에 있을수록 매 step (hold와 같은 크기로 경쟁), fwd_max에서 포화 → 앞발이 2단 수직면에 안 닿게
         fwd = bx.clamp(0.0, fwd_max)
-        return (gain + bonus * done) / env.step_dt + hold * held + support * stable + body_fwd * fwd
+        scale = 1 + 9 * (phase == NUM_PHASES)  # 마지막 phase 완료(= 성공)만 bonus × 10
+        return (gain + bonus * scale * done) / env.step_dt + hold * held + support * stable + body_fwd * fwd
