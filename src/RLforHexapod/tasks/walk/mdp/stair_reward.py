@@ -7,7 +7,11 @@ from .observations import tip_offsets, stairs_terrain_height
 
 # asset_cfg 발 순서: tibia(L1), tibia_2 ~ tibia_6 (preserve_order=True)
 FRONT, MIDDLE, REAR = [0, 5], [1, 4], [2, 3]
-NUM_PHASES = 5  # 0: 전진, 1: 앞발 들기, 2/3/4: 앞/중간/뒷발 1단 이상, 5: 완료
+# phase 표 (종류, 대상 발). approach: 앞발 x 전진, lift: 발 높이 들기, place: 1단 위에 딛기
+PHASES = [("approach", FRONT), ("lift", FRONT), ("place", FRONT),
+          ("lift", MIDDLE), ("place", MIDDLE), ("lift", REAR), ("place", REAR)]
+NUM_PHASES = len(PHASES)  # = 완료 phase 번호
+OBS_PHASES = 12  # obs one-hot 크기 고정 → phase를 늘려도 체크포인트 유지
 
 
 def feet_tip_pos(env, asset_cfg, tip_offset):
@@ -25,7 +29,7 @@ def get_phase(env):
     return env.stair_phase
 
 
-def stair_phase_obs(env, num_phases: int = NUM_PHASES):
+def stair_phase_obs(env, num_phases: int = OBS_PHASES):
     return F.one_hot(get_phase(env).clamp(max=num_phases - 1), num_phases).float()
 
 
@@ -83,8 +87,8 @@ def reset_stair_phase(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
 
 
 class stair_phase_reward(ManagerTermBase):
-    """최고기록 갱신량 보상 + phase 완료 시 bonus 1회.
-    0: 앞발 x, 1: 앞발 높이, 2/3: 앞/중간발 높이 + 몸통 x, 4: 뒷발 높이 + 뒷발 x + 몸통 x."""
+    """PHASES 표에 따라 최고기록 갱신량 보상 + phase 완료 시 bonus 1회.
+    approach: 앞발 x, lift: 발 높이, place: 몸통 x (뒷발은 뒷발 x + 몸통 x × rear_body_fwd)."""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -130,12 +134,19 @@ class stair_phase_reward(ManagerTermBase):
         self.best_z = torch.maximum(self.best_z, z)
 
         phase = get_phase(env)
-        gain = gx * (phase == 0) + gz[:, FRONT].sum(1) * (phase == 1)
-        done = ((phase == 0) & (self.best_x >= approach_x)) | ((phase == 1) & (self.best_z[:, FRONT] >= lift_z).all(1))
-        # 앞/중간발은 몸통 x, 뒷발은 뒷발 x + 몸통 x × rear_body_fwd (몸을 단 안쪽으로)
-        for k, feet, gfwd in zip((2, 3, 4), (FRONT, MIDDLE, REAR), (gbx, gbx, grx + rear_body_fwd * gbx)):
-            gain += (gz[:, feet].sum(1) + gfwd) * (phase == k)
-            done |= (phase == k) & on[:, feet].all(1)
+        gain = torch.zeros(env.num_envs, device=env.device)
+        done = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        for k, (kind, feet) in enumerate(PHASES):
+            now = phase == k
+            if kind == "approach":
+                gain += gx * now
+                done |= now & (self.best_x >= approach_x)
+            elif kind == "lift":  # 발마다 한 번씩 lift_z 이상 (동시에 들 필요 없음)
+                gain += gz[:, feet].sum(1) * now
+                done |= now & (self.best_z[:, feet] >= lift_z).all(1)
+            else:  # place: 뒷발은 몸을 밀지 않고 다리를 접어 단 안쪽으로
+                gain += (grx + rear_body_fwd * gbx if feet is REAR else gbx) * now
+                done |= now & on[:, feet].all(1)
 
         # 새 phase는 지금부터 다시 기록
         self.best_z[done] = z[done]
@@ -147,9 +158,9 @@ class stair_phase_reward(ManagerTermBase):
         save = done & (phase >= 2) & (phase < NUM_PHASES)
         if save.any():
             save_phase_states(env, save.nonzero().squeeze(-1), phase[save])
-        # 유지 보상: 완료한 다리 쌍이 단 위에 있으면 매 step
-        held = sum(on[:, feet].all(1) * (phase > k) for k, feet in zip((2, 3, 4), (FRONT, MIDDLE, REAR)))
-        # phase 4: 몸통(무게중심)이 중간발보다 support_margin 앞 → 뒷발을 들어도 안 넘어짐 (매 step, 상한 1)
+        # 유지 보상: place를 완료한 다리 쌍이 단 위에 있으면 매 step
+        held = sum(on[:, feet].all(1) * (phase > k) for k, (kind, feet) in enumerate(PHASES) if kind == "place")
+        # 뒷발 phase(lift, place): 몸통(무게중심)이 중간발보다 support_margin 앞 → 뒷발을 들어도 안 넘어짐 (매 step, 상한 1)
         margin = (bx - tips[:, MIDDLE, 0].mean(1)) / support_margin
-        stable = margin.clamp(0.0, 1.0) * (phase == 4)
+        stable = margin.clamp(0.0, 1.0) * (phase >= NUM_PHASES - 2) * (phase < NUM_PHASES)
         return (gain + bonus * done) / env.step_dt + hold * held + support * stable
