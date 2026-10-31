@@ -88,7 +88,8 @@ def reset_stair_phase(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
 
 class stair_phase_reward(ManagerTermBase):
     """PHASES 표에 따라 최고기록 갱신량 보상 + phase 완료 시 bonus 1회.
-    approach: 앞발 x, lift: 발 높이, place: 몸통 x (뒷발은 뒷발 x + 몸통 x × rear_body_fwd)."""
+    approach: 앞발 x, lift: 발 높이, place: 몸통 x (뒷발은 뒷발 x + 몸통 x × rear_body_fwd).
+    모든 phase 공통: 몸통 x × body_fwd."""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -108,7 +109,8 @@ class stair_phase_reward(ManagerTermBase):
         self._env.extras["log"]["Metrics/stair_phase"] = self.last_phase[env_ids].mean()  # 끝난 에피소드의 도달 phase
 
     def __call__(self, env, asset_cfg, stairs, lift: float = 0.03, contact_tol: float = 0.03, bonus: float = 1.0,
-                 hold: float = 1.0, rear_body_fwd: float = 0.5, support: float = 0.5, support_margin: float = 0.05):
+                 hold: float = 1.0, rear_body_fwd: float = 0.5, support: float = 0.5, support_margin: float = 0.05,
+                 body_fwd: float = 5.0):
         approach_x, lift_z = stairs.x0 - 0.05, stairs.step_height + lift
         tips = feet_tip_pos(env, asset_cfg, self.offset)
         x = tips[:, FRONT, 0].min(dim=1).values.clamp(max=approach_x)  # 두 앞발 중 뒤처진 발
@@ -134,7 +136,7 @@ class stair_phase_reward(ManagerTermBase):
         self.best_z = torch.maximum(self.best_z, z)
 
         phase = get_phase(env)
-        gain = torch.zeros(env.num_envs, device=env.device)
+        gain = body_fwd * gbx  # 모든 phase 공통: 몸통 x 최고기록 갱신량
         done = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
         for k, (kind, feet) in enumerate(PHASES):
             now = phase == k
