@@ -4,7 +4,7 @@ _PACKAGE = __name__
 
 gym.register(
     id="Hexapod-Walk",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point":f"{_PACKAGE}.env_cfg:HexapodEnvCfg",
@@ -14,7 +14,7 @@ gym.register(
 
 gym.register(
     id="Hexapod-Stair",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point":f"{_PACKAGE}.env_cfg:HexapodStairEnvCfg",

@@ -132,6 +132,7 @@ class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_low = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": 0.05})
     bad_ori  = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 1.0})  # 약 57°
+    sim_nan = DoneTerm(func=mdp.sim_nan)
 
 
 @configclass
@@ -232,7 +233,7 @@ class StairsRewardsCfg:
     rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]), "skip_phases": (5, 6)})
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-90.0,
-                                  params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup"]})  # 성공 제외
+                                  params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup", "sim_nan"]})  # 성공 제외
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=6.0, params={
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
                                     preserve_order=True),
