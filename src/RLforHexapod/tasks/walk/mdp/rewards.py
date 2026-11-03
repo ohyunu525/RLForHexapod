@@ -1,20 +1,8 @@
 import torch
-from isaaclab.envs.mdp import track_ang_vel_z_exp, track_lin_vel_xy_exp
 from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.utils.math import quat_apply
 
 from .observations import tip_offsets
-from .stair_reward import PHASE_SETTLE, get_phase
-
-
-def track_lin_vel_until_settle(env, command_name: str, std: float) -> torch.Tensor:
-    """속도 명령 추종 보상. SETTLE에서는 멈춰야 하므로 끈다."""
-    return track_lin_vel_xy_exp(env, std=std, command_name=command_name) * (get_phase(env) != PHASE_SETTLE)
-
-
-def track_ang_vel_until_settle(env, command_name: str, std: float) -> torch.Tensor:
-    """회전 명령 추종 보상. SETTLE에서는 멈춰야 하므로 끈다."""
-    return track_ang_vel_z_exp(env, std=std, command_name=command_name) * (get_phase(env) != PHASE_SETTLE)
 
 
 class base_height_progress(ManagerTermBase):
@@ -45,13 +33,10 @@ def feet_stumble(env, sensor_cfg: SceneEntityCfg, ratio: float = 4.0) -> torch.T
     return torch.any(hit, dim=1).float()
 
 
-def feet_long_air_time(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.5, skip_phases: tuple = ()) -> torch.Tensor:
-    """발이 threshold(초)보다 오래 떠 있으면 넘은 시간만큼 벌점 (공중에서 흔들리는 다리 억제). skip_phases에서는 끔."""
+def feet_long_air_time(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.5) -> torch.Tensor:
+    """발이 threshold(초)보다 오래 떠 있으면 넘은 시간만큼 벌점 (공중에서 흔들리는 다리 억제)."""
     air = env.scene.sensors[sensor_cfg.name].data.current_air_time.torch[:, sensor_cfg.body_ids]
-    penalty = torch.sum(torch.clamp(air - threshold, min=0.0), dim=1)
-    for p in skip_phases:
-        penalty *= get_phase(env) != p
-    return penalty
+    return torch.sum(torch.clamp(air - threshold, min=0.0), dim=1)
 
 
 class feet_clearance(ManagerTermBase):

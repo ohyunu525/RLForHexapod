@@ -41,7 +41,7 @@ HEXAPOD_CFG = ArticulationCfg(
         joint_pos={
             ".*_coxa": 0.0,
             ".*_femur": math.radians(20.0),  # 0=아래로 수직, 90=수평 (한계 0~180)
-            ".*_tibia": math.radians(-110.0),  # -180=femur 수평일 때 수직 (한계 -180~0)
+            ".*_tibia": math.radians(-110.0),  # -90=femur와 일직선, 값이 작을수록 아래로 굽힘 (한계 -250~-70: 아래 160, 위 20)
         },
         joint_vel={".*": 0.0},
     ),
@@ -118,7 +118,7 @@ class ActionsCfg:
 class EventsCfg:
     # 실제 서보 회전 범위. robot.usda(LFS)의 0~270 override를 시작 시 덮어씀, coxa는 USD의 ±90 그대로
     joint_limits = EventTerm(func=mdp.set_joint_pos_limits, mode="startup", params={
-        "limits_deg": {".*_femur": (0.0, 180.0), ".*_tibia": (-180.0, 0.0)}})
+        "limits_deg": {".*_femur": (0.0, 180.0), ".*_tibia": (-250.0, -70.0)}})
     # 리셋 때 로봇을 init_state(초기 자세)로 되돌림
     reset_all = EventTerm(func=mdp.reset_scene_to_default, mode="reset")
 
@@ -187,9 +187,29 @@ class HexapodEnvCfg(ManagerBasedRLEnvCfg):
 # 계단 형상: 씬 배치(StairsSceneCfg)와 특권 관측이 같은 값을 쓰도록 한 곳에서 정의
 STAIRS = mdp.StairsGeometryCfg(x0=0.5, step_height=0.16)
 
+# 시작 자세이자 완료 자세: 발 간격을 좁혀 모든 다리가 깊이 30cm인 한 단에 올라가는 자세 (URDF로 계산).
+# 몸통 기준 발끝: 앞 (+8, ±9)cm, 중간 (+3, ±20)cm, 뒤 (-7, ±9)cm, 몸통 아래 22cm
+HEXAPOD_STAIR_CFG = HEXAPOD_CFG.replace(
+    init_state=ArticulationCfg.InitialStateCfg(
+        # 몸통은 첫 수직면 13cm 앞 (mdp.STAGES 마지막 이동의 몸통 위치와 같은 자리)
+        pos=(STAIRS.x0 - 0.13, 0.0, 0.24),
+        rot=(0.0, 0.0, 0.0, 1.0),
+        joint_pos={
+            "L1_coxa": math.radians(72.55), "L1_femur": math.radians(36.30), "L1_tibia": math.radians(-150.87),
+            "L2_coxa": math.radians(-16.46), "L2_femur": math.radians(48.65), "L2_tibia": math.radians(-141.82),
+            "L3_coxa": math.radians(-85.45), "L3_femur": math.radians(37.46), "L3_tibia": math.radians(-150.93),
+            "L4_coxa": math.radians(86.10), "L4_femur": math.radians(37.46), "L4_tibia": math.radians(-150.93),
+            "L5_coxa": math.radians(16.63), "L5_femur": math.radians(48.65), "L5_tibia": math.radians(-141.82),
+            "L6_coxa": math.radians(-70.96), "L6_femur": math.radians(36.32), "L6_tibia": math.radians(-150.87),
+        },
+        joint_vel={".*": 0.0},
+    ),
+)
+
 
 @configclass
 class StairsSceneCfg(SceneCfg):
+    robot = HEXAPOD_STAIR_CFG
     stairs = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Stairs",
         spawn=sim_utils.UsdFileCfg(
@@ -200,77 +220,71 @@ class StairsSceneCfg(SceneCfg):
 
 @configclass
 class StairsTerminationsCfg(TerminationsCfg):
+    # 기울어지면 뒷발을 들 수 없다. 약 20° 넘으면 실패
+    bad_ori = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.35})
     # 몸통 중심이 계단 폭(1.0m, stairs_*.usda의 y scale) 밖으로 나가면 실패
     off_stairs = DoneTerm(func=mdp.out_of_stairs_width, params={"half_width": STAIRS.width/2})
     sim_blowup = DoneTerm(func=mdp.joint_vel_out_of_manual_limit, params={"max_velocity": 50.0})
-    # 꼭대기에서 기본 자세로 멈추기까지 마치면 성공
-    success = DoneTerm(func=mdp.stair_phase_reached, params={"phase": mdp.PHASE_DONE}, time_out=True)
+    # 이동마다 시간제한: 시도하지 않고 버티면 실패
+    move_timeout = DoneTerm(func=mdp.stair_move_timed_out)
+    # 꼭대기에서 시작 자세로 멈추기까지 마치면 성공
+    success = DoneTerm(func=mdp.stair_success, time_out=True)
 
 
 @configclass
 class StairsEventsCfg(EventsCfg):
-    # x_ranges 순서 = phase 번호 (몸통 x 범위). APPROACH: 앞발~수직면 0.25~0.45m, MOVE_FRONT: 앞발이 수직면 3~5cm 앞
-    stair_phase = EventTerm(func=mdp.reset_stair_phase, mode="reset",
-                            params={"x_ranges": ((-0.1, 0.1), (0.30, 0.32))})
+    stair_reset = EventTerm(func=mdp.reset_stair_state, mode="reset", params={"x_noise": 0.01, "buffer_ratio": 0.5})
 
 
 @configclass
 class StairsRewardsCfg:
-    track_lin_vel = RewTerm(func=mdp.track_lin_vel_until_settle, weight=1.0,
-                            params={"command_name": "base_velocity", "std": 0.5})
-    track_ang_vel = RewTerm(func=mdp.track_ang_vel_until_settle, weight=0.5,
-                            params={"command_name": "base_velocity", "std": 0.5})
-    height_progress = RewTerm(func=mdp.base_height_progress, weight=2.5)
+    # 목표: 이동을 마칠 때마다 1번 (weight = 점수)
+    move_bonus = RewTerm(func=mdp.stair_move_bonus, weight=50.0)
+
+    # 과정: 어디로 갈지 알려 주는 항 (점수 0~1, weight = 초당 최대 점수)
+    feet_tracking = RewTerm(func=mdp.stair_feet_tracking, weight=10.0)
+    body_pose = RewTerm(func=mdp.stair_body_pose, weight=4.0)
+    settle_still = RewTerm(func=mdp.stair_settle_still, weight=6.0)
+
+    # 공통 조건: 네 발 지지, 무게중심, 수평
+    stance_contact = RewTerm(func=mdp.stair_stance_contact, weight=4.0)
+    com_margin = RewTerm(func=mdp.stair_com_margin, weight=4.0)
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-20.0)
+    # 실패: weight × step_dt(0.02)가 실제 점수 → -10점
+    termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-500.0, params={
+        "term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup", "sim_nan", "move_timeout"]})  # 성공 제외
+
+    # 동작 규제
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["body", "femur.*", "coxa.*"]),
         "threshold": 1.0})
-    # tibia 윗 부분으로 닿는 건 감지 안됨, 관찰 후 수정 권함.
-    feet_stumble = RewTerm(func=mdp.feet_stumble, weight=-0.5, params={
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names="tibia.*")})
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-0.5)
-    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-0.2)
-    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
+    action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-7)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-1e-3)
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    # 중간다리, 뒷다리: 들었으면 내려놓게. 그 쌍을 옮기는 phase에서만 끔
-    feet_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"]),
-        "skip_phases": (mdp.PHASE_MOVE_MIDDLE,)})
-    rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]),
-        "skip_phases": (mdp.PHASE_MOVE_REAR,)})
-    termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-90.0,
-                                  params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup", "sim_nan"]})  # 성공 제외
-    stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=6.0, params={
-        "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
-                                    preserve_order=True),
-        # asset_cfg와 발 순서가 같아야 한다
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
-                                     preserve_order=True),
-        "stairs": STAIRS, "bonus": 40.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "swing_clearance": 0.3,
-        "fwd_ahead_before_middle": 0.05, "lift_hold": 1.0, "stance": 0.3, "settle": mdp.SettleCfg()})
 
 
 @configclass
 class StairsObservationsCfg(ObservationsCfg):
     @configclass
     class PolicyCfg(ObservationsCfg.PolicyCfg):
+        # 속도 명령을 따르지 않으므로 뺀다
+        command = None
         # 계단 teacher 특권 관측
-        # 1. 앞발(L1, L6) 끝 → 앞쪽 다음 단 수직면까지 거리 (2)
-        front_feet_to_stairs = ObsTerm(func=mdp.front_feet_to_stairs, params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_6"]),
-            "stairs": STAIRS, "max_dist": 1.0})
-        # 2. 발끝이 지형에서 떠 있는 높이 (6) + 발끝 아래 지형의 몸통 대비 깊이 (6)
+        # 1. 발끝이 지형에서 떠 있는 높이 (6) + 발끝 아래 지형의 몸통 대비 깊이 (6)
         feet_height = ObsTerm(func=mdp.feet_height_above_terrain, params={
             "asset_cfg": SceneEntityCfg("robot", body_names="tibia.*"), "stairs": STAIRS})
         terrain_under_feet = ObsTerm(func=mdp.terrain_height_under_feet, params={
             "asset_cfg": SceneEntityCfg("robot", body_names="tibia.*"), "stairs": STAIRS})
-        # 3. 단 높이 (1)
+        # 2. 단 높이 (1)
         step_height = ObsTerm(func=mdp.stairs_step_height, params={"stairs": STAIRS})
-        # 4. 현재 phase (one-hot)
-        phase = ObsTerm(func=mdp.stair_phase_obs)
+        # 3. 지금 할 일: 이동 단계 (5), 옮기는 발의 목표 (6), 몸통 목표 (4), 쓴 시간 (1)
+        stage = ObsTerm(func=mdp.stair_stage_obs)
+        feet_target = ObsTerm(func=mdp.stair_feet_target_obs)
+        body_target = ObsTerm(func=mdp.stair_body_target_obs)
+        time_used = ObsTerm(func=mdp.stair_time_left_obs)
 
     policy: PolicyCfg = PolicyCfg()
 
@@ -283,5 +297,12 @@ class HexapodStairEnvCfg(HexapodEnvCfg):
     events: EventsCfg = StairsEventsCfg()
     rewards: RewardsCfg = StairsRewardsCfg()
     terminations: TerminationsCfg = StairsTerminationsCfg()
+    # StairTracker가 읽는 값
+    stairs: mdp.StairsGeometryCfg = STAIRS
+    stair_gait: mdp.StairGaitCfg = mdp.StairGaitCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = 45.0  # 이동 12번 × 시간제한 3초 + 정지
 
 

@@ -440,7 +440,7 @@
     <parent link="femur"/>
     <child link="tibia"/>
     <axis xyz="0 0 1"/>
-    <limit effort="1.8633" velocity="6.545" lower="-3.14159" upper="0"/>
+    <limit effort="1.8633" velocity="6.545" lower="-4.36332" upper="-1.22173"/>
   </joint>
   <!-- Joint from coxa to femur -->
   <joint name="L1_femur" type="revolute">
@@ -696,7 +696,7 @@
     <parent link="femur_2"/>
     <child link="tibia_2"/>
     <axis xyz="0 0 1"/>
-    <limit effort="1.8633" velocity="6.545" lower="-3.14159" upper="0"/>
+    <limit effort="1.8633" velocity="6.545" lower="-4.36332" upper="-1.22173"/>
   </joint>
   <!-- Joint from coxa_2 to femur_2 -->
   <joint name="L2_femur" type="revolute">
@@ -952,7 +952,7 @@
     <parent link="femur_3"/>
     <child link="tibia_3"/>
     <axis xyz="0 0 1"/>
-    <limit effort="1.8633" velocity="6.545" lower="-3.14159" upper="0"/>
+    <limit effort="1.8633" velocity="6.545" lower="-4.36332" upper="-1.22173"/>
   </joint>
   <!-- Joint from coxa_3 to femur_3 -->
   <joint name="L3_femur" type="revolute">
@@ -1208,7 +1208,7 @@
     <parent link="femur_4"/>
     <child link="tibia_4"/>
     <axis xyz="0 0 1"/>
-    <limit effort="1.8633" velocity="6.545" lower="-3.14159" upper="0"/>
+    <limit effort="1.8633" velocity="6.545" lower="-4.36332" upper="-1.22173"/>
   </joint>
   <!-- Joint from coxa_4 to femur_4 -->
   <joint name="L4_femur" type="revolute">
@@ -1464,7 +1464,7 @@
     <parent link="femur_5"/>
     <child link="tibia_5"/>
     <axis xyz="0 0 1"/>
-    <limit effort="1.8633" velocity="6.545" lower="-3.14159" upper="0"/>
+    <limit effort="1.8633" velocity="6.545" lower="-4.36332" upper="-1.22173"/>
   </joint>
   <!-- Joint from coxa_5 to femur_5 -->
   <joint name="L5_femur" type="revolute">
@@ -1720,7 +1720,7 @@
     <parent link="femur_6"/>
     <child link="tibia_6"/>
     <axis xyz="0 0 1"/>
-    <limit effort="1.8633" velocity="6.545" lower="-3.14159" upper="0"/>
+    <limit effort="1.8633" velocity="6.545" lower="-4.36332" upper="-1.22173"/>
   </joint>
   <!-- Joint from coxa_6 to femur_6 -->
   <joint name="L6_femur" type="revolute">

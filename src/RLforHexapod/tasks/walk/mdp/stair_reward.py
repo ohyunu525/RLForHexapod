@@ -1,83 +1,278 @@
+"""계단 오르기 teacher의 진행 상태와 보상.
+
+목표: 수평을 유지하고 네 발 안에 무게중심을 둔 채, 한 쌍씩 다음 단으로 옮긴다.
+
+이동 순서 (단마다 4번, STAGES 참고): 앞발 → 중간발(수직면 바로 위) → 뒷발 → 중간발(앞으로)
+4번을 마치면 모든 발이 한 단 위에 있다. 전체 단을 오르면 SETTLE(정지) → DONE(성공).
+이동 번호 move는 앞으로만 증가하고, 이동마다 시간제한이 있다.
+
+한 step의 계산은 StairTracker.update()에 모여 있고, 보상 함수들은 그 결과를 읽기만 한다.
+"""
+
+from typing import NamedTuple
+
 import torch
 import torch.nn.functional as F
 from isaaclab.managers import ManagerTermBase
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import quat_apply
 
-from .observations import tip_offsets, stairs_terrain_height
+from .observations import stairs_terrain_height, tip_offsets
 
-# ===== 다리 쌍 =====
-# asset_cfg 발 순서: tibia(L1), tibia_2 ~ tibia_6 (preserve_order=True)
+# ===== 다리 =====
+# 발 순서: tibia(L1), tibia_2 ~ tibia_6
+FOOT_BODIES = ["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"]
 FRONT, MIDDLE, REAR = [0, 5], [1, 4], [2, 3]
-PAIRS = [FRONT, MIDDLE, REAR]  # 같은 단이면 앞쪽 우선 (argmin은 첫 번째를 고름)
 
-# ===== phase =====
-# 흐름: APPROACH → MOVE_* 반복 → SETTLE → DONE
-# MOVE_*는 고정 순서가 아니다. 끝날 때마다 가장 낮은 쌍을 골라 한 단 위로 옮기고, 모든 쌍이 꼭대기면 SETTLE로 간다.
-# 예) 3단 계단: 앞 → 중간 → 뒤 → 앞 → ... 총 9번. 지금 몇 단째로 가는지는 phase가 아니라 target이 기억한다.
-PHASE_APPROACH = 0     # 앞발을 첫 수직면 바로 앞까지 전진
-PHASE_MOVE_FRONT = 1   # 앞발 쌍을 target 단 위에 딛기
-PHASE_MOVE_MIDDLE = 2  # 중간발 쌍을 target 단 위에 딛기
-PHASE_MOVE_REAR = 3    # 뒷발 쌍을 target 단 위에 딛기
-PHASE_SETTLE = 4       # 꼭대기에서 기본 자세로 서서 멈추기
-PHASE_DONE = 5         # 성공. env_cfg의 success 종료 조건이 에피소드를 끝낸다
-MOVE_PHASES = {PHASE_MOVE_FRONT: FRONT, PHASE_MOVE_MIDDLE: MIDDLE, PHASE_MOVE_REAR: REAR}
-OBS_PHASES = 12  # obs one-hot 크기 고정 → phase를 늘려도 관측 차원 유지
+
+class Stage(NamedTuple):
+    """한 단을 오르는 이동 하나. x는 이번에 오를 단의 수직면 기준, 몸통 z는 아래쪽 단 윗면 기준 [m]."""
+
+    feet: list          # 옮기는 쌍
+    foot_x: float       # 착지 목표 x
+    via_x: float        # 들어 올릴 때의 경유점 x
+    body_lift: tuple    # 발을 들 때 몸통 목표 (x, z)
+    body_land: tuple    # 발이 단 위로 올라간 뒤 몸통 목표 (x, z)
+
+
+# 값의 근거: URDF 계산. 몸통 수평, 다리가 닿고, 지지 발 안에 무게중심이 있고(여유 3cm 이상), 다리끼리 안 부딪히는 자세
+STAGES = [
+    Stage(FRONT, 0.25, -0.02, (-0.14, 0.26), (-0.13, 0.20)),
+    # 뒷발을 들 때 무게중심이 중간발 앞에 있도록, 중간발을 수직면 바로 위에 먼저 놓는다
+    Stage(MIDDLE, 0.03, -0.02, (0.02, 0.24), (0.02, 0.24)),
+    Stage(REAR, 0.10, -0.02, (0.08, 0.22), (0.14, 0.26)),
+    # 앞발을 들 때 무게중심이 중간발 뒤에 있도록, 중간발을 다시 앞으로 옮긴다. 끝나면 몸통 위치가 다음 단의 시작 위치가 된다
+    Stage(MIDDLE, 0.20, 0.115, (0.17, 0.38), (0.17, 0.38)),
+]
+NUM_STAGES = len(STAGES)
+STAGE_OBS_SIZE = NUM_STAGES + 1  # 이동 단계 + 정지
 
 
 @configclass
-class SettleCfg:
-    """SETTLE phase 설정: 꼭대기에서 기본 자세(init_state의 관절 각도)로 서서 멈추기."""
+class StairGaitCfg:
+    """판정 기준과 추적 폭. 보상 크기는 env_cfg의 weight에서 정한다."""
 
-    reward: float = 4.0      # 정지 점수(0~1)에 곱하는 매 step 보상
-    hold_time: float = 1.5   # 아래 허용 오차를 연속으로 지켜야 하는 시간 [s]. 채우면 성공
+    # 옮기는 발
+    clearance: float = 0.04      # 경유점: 단 윗면 위 높이
+    clear_height: float = 0.02   # 단 윗면 위로 이만큼 올라오면 경유 완료, 착지 목표로 전환
+    land_x_tol: float = 0.04     # 착지 판정: 목표 x와의 오차
+    track_std: float = 0.10      # 추적 점수 폭: 거리가 이 값이면 점수 약 0.37
 
-    # 허용 오차: 모든 발이 꼭대기에 있고 셋 다 이 안에 들면 "멈춘 상태"
-    pose_tol: float = 0.2    # 기본 자세와의 관절 각도 RMS 오차 [rad]
-    tilt_tol: float = 0.1    # 몸통 기울기 (중력 벡터의 수평 성분, 0.1 ≈ 6°)
-    speed_tol: float = 0.1   # 몸통 속도 크기 (선속도 + 각속도)
+    # 접지
+    tip_height: float = 0.013    # 딛었을 때 발끝 추정점이 지면보다 높은 만큼 (메시 최저점과의 차이)
+    contact_tol: float = 0.03    # 발끝과 지면의 높이 차 허용치
 
-    # 점수 폭: 오차가 이 값이면 해당 점수가 약 0.37. 허용 오차보다 넓어서 멀리 있어도 다가갈 방향이 보인다
+    # 몸통
+    body_x_std: float = 0.10
+    body_z_std: float = 0.10
+    body_y_std: float = 0.10
+    body_yaw_std: float = 0.30
+    com_margin: float = 0.03     # 무게중심 여유가 이 값 이상이면 만점
+
+    # 시간제한 [s]: 넘기면 실패 종료 → 시도하지 않고 버티는 동작을 막는다
+    move_time_limit: float = 3.0
+    settle_time_limit: float = 6.0
+
+    # 정지
+    hold_time: float = 1.5       # 아래 허용 오차를 연속으로 지켜야 하는 시간 [s]
+    pose_tol: float = 0.2        # 시작 자세와의 관절 각도 RMS 오차 [rad]
+    tilt_tol: float = 0.1        # 몸통 기울기 (중력 벡터의 수평 성분, 0.1 ≈ 6°)
+    speed_tol: float = 0.1       # 몸통 속도 크기
     pose_std: float = 0.4
     tilt_std: float = 0.2
     speed_std: float = 0.3
 
-
-def feet_tip_pos(env, asset_cfg, tip_offset):
-    """발끝 위치 (env 원점 기준) (N, B, 3) = 무릎 위치 + 회전 × offset."""
-    # env.scene[asset_cfg.name] : env.scene["robot"]
-    data = env.scene[asset_cfg.name].data
-    # quat (N, K, 4) : 환경 수, 링크 수, 쿼터니언
-    quat = data.body_quat_w.torch[:, asset_cfg.body_ids]
-    # 
-    offset_w = quat_apply(quat, tip_offset.expand(quat.shape[0], -1, -1))
-    return data.body_pos_w.torch[:, asset_cfg.body_ids] + offset_w - env.scene.env_origins.unsqueeze(1)
+    # 리셋 버퍼
+    buffer_size: int = 1000
+    save_speed_max: float = 0.5  # 이 속도 이하로 안정적일 때만 시작 상태로 저장
 
 
-def pair_levels(stairs, terrain):
-    """쌍별 단 번호 (N, 3): 두 발 중 낮은 발 아래의 단 (바닥 = 0)."""
-    lvl = (terrain / stairs.step_height).round()
-    return torch.stack([lvl[:, p].min(1).values for p in PAIRS], 1)
+class StairTracker:
+    """env별 진행 상태를 보관하고, step마다 한 번 진행 상태와 점수를 계산한다."""
+
+    def __init__(self, env):
+        self.env = env
+        self.stairs = env.cfg.stairs
+        self.gait = env.cfg.stair_gait
+        self.asset = env.scene["robot"]
+        self.sensor = env.scene.sensors["contact_forces"]
+        self.foot_ids, _ = self.asset.find_bodies(FOOT_BODIES, preserve_order=True)
+        self.sensor_ids, _ = self.sensor.find_bodies(FOOT_BODIES, preserve_order=True)
+        self.tip_offset = tip_offsets(FOOT_BODIES, env.device)
+
+        # 이동 번호: 0 ~ settle_move - 1 = 이동, settle_move = 정지, done_move = 성공
+        self.settle_move = NUM_STAGES * self.stairs.num_steps
+        self.done_move = self.settle_move + 1
+
+        # STAGES 표를 텐서로
+        device, n = env.device, env.num_envs
+        self.table_moving = torch.zeros(NUM_STAGES, len(FOOT_BODIES), dtype=torch.bool, device=device)
+        for k, stage in enumerate(STAGES):
+            self.table_moving[k, stage.feet] = True
+        self.table_feet = torch.tensor([s.feet for s in STAGES], device=device)
+        self.table_foot_x = torch.tensor([s.foot_x for s in STAGES], device=device)
+        self.table_via_x = torch.tensor([s.via_x for s in STAGES], device=device)
+        self.table_body_lift = torch.tensor([s.body_lift for s in STAGES], device=device)
+        self.table_body_land = torch.tensor([s.body_land for s in STAGES], device=device)
+
+        # env별 상태
+        self.move = torch.zeros(n, dtype=torch.long, device=device)
+        self.cleared = torch.zeros(n, len(FOOT_BODIES), dtype=torch.bool, device=device)  # 경유 완료한 발
+        self.move_time = torch.zeros(n, device=device)    # 이번 이동에 쓴 시간 [s]
+        self.steady_time = torch.zeros(n, device=device)  # 멈춘 상태를 유지한 시간 [s]
+        self.ended_move = torch.zeros(n, dtype=torch.long, device=device)  # 끝난 에피소드의 이동 번호 (로그용)
+        self._updated_at = -1
+
+        # 이번 step의 결과 (보상 함수들이 읽는다)
+        self.just_done = torch.zeros(n, dtype=torch.bool, device=device)
+        self.feet_score = torch.zeros(n, device=device)
+        self.stance_score = torch.zeros(n, device=device)
+        self.com_score = torch.zeros(n, device=device)
+        self.body_score = torch.zeros(n, device=device)
+        self.settle_score = torch.zeros(n, device=device)
+
+    # ----- 지금 이동의 목표 -----
+    def stage_and_level(self):
+        """표의 몇 번째 이동인지, 몇 번째 단(바닥 = 0)을 오르는 중인지. 정지 중에는 마지막 이동의 값."""
+        climbing = self.move.clamp(max=self.settle_move - 1)
+        return climbing % NUM_STAGES, climbing // NUM_STAGES
+
+    def riser_and_top(self, level):
+        """이번에 오를 단의 수직면 x와 윗면 높이."""
+        return self.stairs.x0 + level * self.stairs.tread, (level + 1) * self.stairs.step_height
+
+    def moving_feet(self, stage):
+        """지금 옮기는 발 (N, 6). 정지 중에는 없음."""
+        return self.table_moving[stage] & (self.move < self.settle_move).unsqueeze(1)
+
+    def foot_targets(self, stage, riser, top):
+        """(경유점 x, z), (착지점 x, z). 각각 (N,)."""
+        tip, clearance = self.gait.tip_height, self.gait.clearance
+        return (riser + self.table_via_x[stage], top + clearance + tip), (riser + self.table_foot_x[stage], top + tip)
+
+    def body_target(self, stage, level, moving, riser):
+        """몸통 목표 x, z (N,). 옮기는 발이 모두 경유를 마치면 착지용 목표로 바뀐다."""
+        all_cleared = (self.cleared | ~moving).all(1, keepdim=True)
+        offset = torch.where(all_cleared, self.table_body_land[stage], self.table_body_lift[stage])
+        return riser + offset[:, 0], level * self.stairs.step_height + offset[:, 1]
+
+    def tips(self):
+        """발끝 추정 위치 (env 원점 기준) (N, 6, 3) = 무릎 위치 + 회전 × offset."""
+        d = self.asset.data
+        quat = d.body_quat_w.torch[:, self.foot_ids]
+        offset_w = quat_apply(quat, self.tip_offset.expand(quat.shape[0], -1, -1))
+        return d.body_pos_w.torch[:, self.foot_ids] + offset_w - self.env.scene.env_origins.unsqueeze(1)
+
+    def body_state(self):
+        """몸통 위치 (env 원점 기준) (N, 3)과 yaw 오차 (앞 방향 벡터의 y 성분) (N,)."""
+        pose = self.asset.data.root_pose_w.torch
+        forward = torch.zeros_like(pose[:, :3])
+        forward[:, 0] = 1.0
+        return pose[:, :3] - self.env.scene.env_origins, quat_apply(pose[:, 3:7], forward)[:, 1]
+
+    # ----- step마다 한 번 -----
+    def update(self):
+        counter = self.env.common_step_counter
+        if counter == self._updated_at:
+            return
+        self._updated_at = counter
+
+        gait, dt = self.gait, self.env.step_dt
+        stage, level = self.stage_and_level()
+        riser, top = self.riser_and_top(level)
+        moving = self.moving_feet(stage)
+        planted = ~moving
+        settling = self.move == self.settle_move
+
+        tips = self.tips()
+        terrain = stairs_terrain_height(self.stairs, tips[..., 0], tips[..., 1])
+        air_time = self.sensor.data.current_air_time.torch[:, self.sensor_ids]
+        # 실제로 디딘 발: 접촉 센서가 닿았다고 하고, 발끝도 지면 높이 (정강이만 수직면에 닿은 경우를 거른다)
+        near_ground = (tips[..., 2] - terrain - gait.tip_height).abs() < gait.contact_tol
+        grounded = (air_time == 0) & near_ground
+        on_top = (terrain >= top.unsqueeze(1) - 1e-3) & near_ground
+
+        # 옮기는 발: 단 위로 올라오면 경유 완료 (되돌리지 않음)
+        self.cleared |= moving & (tips[..., 2] >= (top + gait.clear_height).unsqueeze(1))
+
+        # 목표 추적 점수: 경유 전 0 ~ 0.5, 경유 후 0.5 ~ 1. 경유를 마쳐도 점수가 줄지 않는다
+        (via_x, via_z), (land_x, land_z) = self.foot_targets(stage, riser, top)
+        dist_via = torch.hypot(tips[..., 0] - via_x.unsqueeze(1), tips[..., 2] - via_z.unsqueeze(1))
+        dist_land = torch.hypot(tips[..., 0] - land_x.unsqueeze(1), tips[..., 2] - land_z.unsqueeze(1))
+        foot_score = torch.where(self.cleared,
+                                 0.5 + 0.5 * torch.exp(-dist_land / gait.track_std),
+                                 0.5 * torch.exp(-dist_via / gait.track_std))
+        feet_score = (foot_score * moving).sum(1) / moving.sum(1).clamp(min=1)
+        # 정지 중에는 옮길 발이 없으므로 만점. 점수가 줄면 일부러 뒷단계에 머무른다
+        self.feet_score = torch.where(self.move >= self.settle_move, torch.ones_like(feet_score), feet_score)
+
+        # 접지 점수: 디뎌야 할 발 중 실제로 디딘 비율
+        self.stance_score = (planted & grounded).sum(1) / planted.sum(1).clamp(min=1)
+
+        # 무게중심 점수: 디딘 발의 x 범위 안쪽으로 얼마나 들어왔는지
+        body_pos, yaw_error = self.body_state()
+        planted_x_min = tips[..., 0].masked_fill(~planted, float("inf")).min(1).values
+        planted_x_max = tips[..., 0].masked_fill(~planted, float("-inf")).max(1).values
+        com_margin = torch.minimum(body_pos[:, 0] - planted_x_min, planted_x_max - body_pos[:, 0])
+        self.com_score = (com_margin / gait.com_margin).clamp(0.0, 1.0)
+
+        # 몸통 점수: 표의 위치, 옆 위치 0, 정면
+        target_x, target_z = self.body_target(stage, level, moving, riser)
+        self.body_score = torch.exp(-(body_pos[:, 0] - target_x).abs() / gait.body_x_std
+                                    - (body_pos[:, 2] - target_z).abs() / gait.body_z_std
+                                    - body_pos[:, 1].abs() / gait.body_y_std
+                                    - yaw_error.abs() / gait.body_yaw_std)
+
+        # 정지 점수와 유지 시간
+        d = self.asset.data
+        pose_error = (d.joint_pos.torch - d.default_joint_pos.torch).pow(2).mean(1).sqrt()
+        tilt = d.projected_gravity_b.torch[:, :2].norm(dim=1)
+        speed = d.root_vel_w.torch.norm(dim=1)
+        score = (on_top.float().mean(1)
+                 * torch.exp(-(pose_error / gait.pose_std) ** 2)
+                 * torch.exp(-(tilt / gait.tilt_std) ** 2)
+                 * torch.exp(-(speed / gait.speed_std) ** 2))
+        self.settle_score = score * settling
+        steady = (on_top.all(1) & grounded.all(1) & (pose_error < gait.pose_tol)
+                  & (tilt < gait.tilt_tol) & (speed < gait.speed_tol))
+        # 멈춘 상태가 끊기면 시간을 처음부터 다시 잰다
+        self.steady_time = torch.where(steady & settling, self.steady_time + dt, torch.zeros_like(self.steady_time))
+
+        # 완료 판정: 옮기는 두 발이 모두 목표 x 근처에서 단을 디딤
+        landed = on_top & (air_time == 0) & ((tips[..., 0] - land_x.unsqueeze(1)).abs() < gait.land_x_tol)
+        move_done = (landed | ~moving).all(1) & (self.move < self.settle_move)
+        settle_done = settling & (self.steady_time >= gait.hold_time)
+        self.just_done = move_done | settle_done
+
+        # 다음 이동으로
+        self.move_time = torch.where(self.just_done, torch.zeros_like(self.move_time), self.move_time + dt)
+        self.move = self.move + self.just_done.long()
+        self.cleared[self.just_done] = False
+
+        # 새 이동에 막 들어선 안정적인 상태 저장 → 리셋 때 시작 상태로 사용
+        save = self.just_done & (self.move < self.done_move) & (speed < gait.save_speed_max)
+        if save.any():
+            save_stair_states(self.env, save.nonzero().squeeze(-1), self.move[save], gait.buffer_size)
+
+    def reset(self, env_ids, moves):
+        self.ended_move[env_ids] = self.move[env_ids]
+        self.move[env_ids] = moves
+        self.cleared[env_ids] = False
+        self.move_time[env_ids] = 0.0
+        self.steady_time[env_ids] = 0.0
+        self.just_done[env_ids] = False
 
 
-def get_phase(env):
-    """env별 현재 phase (PHASE_* 참고). obs/보상/리셋/종료가 같이 씀."""
-    if not hasattr(env, "stair_phase"):
-        env.stair_phase = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
-    return env.stair_phase
+def get_tracker(env) -> StairTracker:
+    if not hasattr(env, "stair_tracker"):
+        env.stair_tracker = StairTracker(env)
+    return env.stair_tracker
 
 
-def stair_phase_obs(env, num_phases: int = OBS_PHASES):
-    return F.one_hot(get_phase(env).clamp(max=num_phases - 1), num_phases).float()
-
-
-def stair_phase_reached(env, phase: int):
-    return get_phase(env) >= phase
-
-
-def save_phase_states(env, env_ids, phases, size: int = 1000):
+# ===== 리셋 =====
+def save_stair_states(env, env_ids, moves, size: int = 1000):
     """
-    env_ids의 현재 상태를 phase별 버퍼에 추가 (위치는 env 원점 기준, 꽉 차면 오래된 것부터 버림).
+    env_ids의 현재 상태를 이동 번호별 버퍼에 추가 (위치는 env 원점 기준, 꽉 차면 오래된 것부터 버림).
 
     S -> size (버퍼 크기)
     stair_states : (S, 7 + 6 + J + J)
@@ -91,7 +286,7 @@ def save_phase_states(env, env_ids, phases, size: int = 1000):
     # d.root_vel_w : (N, 6) : 선속도, 각속도
     # d.joint_pos : (N, J) : 관절 각도
     # d.joint_vel : (N, J) : 관절 속도
-    
+
     d = env.scene["robot"].data
 
     # torch는 꺼내기 위한 문법적 요소
@@ -111,54 +306,49 @@ def save_phase_states(env, env_ids, phases, size: int = 1000):
     # s : (len(env_ids), 7 + 6 + J + J)
     s = torch.cat([pose, d.root_vel_w.torch[env_ids], d.joint_pos.torch[env_ids], d.joint_vel.torch[env_ids]], 1)
 
-    # phases.unique().tolist() : phases 중복 제거 리스트
-    # s[phases == k] : phases가 k인 states stair_states[k]에 붙이기, 만약 없으면 빈 s에 s 붙이기
+    # moves.unique().tolist() : moves 중복 제거 리스트
+    # s[moves == k] : 이동 번호가 k인 상태를 stair_states[k]에 붙이기, 만약 없으면 빈 s에 s 붙이기
     # [-size:] : size만큼 자르기
-    for k in phases.unique().tolist():
-        env.stair_states[k] = torch.cat([env.stair_states.get(k, s[:0]), s[phases == k]])[-size:]
-    
+    for k in moves.unique().tolist():
+        env.stair_states[k] = torch.cat([env.stair_states.get(k, s[:0]), s[moves == k]])[-size:]
 
-def reset_stair_phase(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
-    """시작 phase를 뽑아 그 시작 상태로 옮김 (reset_scene_to_default 다음에 실행).
-    x_ranges의 phase(APPROACH, MOVE_FRONT): 기본 자세 + x_ranges 위치.
-    buffer_ratio 비율로 그 뒤 phase(MOVE_MIDDLE ~ SETTLE): 저장된 상태 (비어 있으면 APPROACH)."""
+
+def reset_stair_state(env, env_ids, x_noise: float = 0.01, buffer_ratio: float = 0.5):
+    """시작 상태를 뽑아 옮김 (reset_scene_to_default 다음에 실행).
+    기본: 바닥에서 시작 자세 + x 오차. buffer_ratio 비율로 뒤쪽 이동의 저장된 상태 (비어 있으면 기본)."""
     # env: ManagerBasedRLEnv
     # env_ids: tensor | slice(None)
 
-    if isinstance(env_ids, slice): 
+    if isinstance(env_ids, slice):
         # 첫 env.reset()은 slice(None)으로 호출됨
         # 궁극적으로 slice(None)은 인덱스 tensor와 똑같지만, 길이와 형태에 대한 데이터가 없다.
         env_ids = torch.arange(env.num_envs, device=env.device)
 
+    tracker = get_tracker(env)
     # n: reset 해당 env 인덱스 갯수
-    # S: buffer size
-    # buf: env의 stair.states (S, 7 + 6 + J + J)
+    # buf: 이동 번호별 저장 상태 (S, 7 + 6 + J + J)
     n, buf = len(env_ids), getattr(env, "stair_states", {})
 
-    # x_ranges : n개의 env에 대해 
-    p = torch.randint(len(x_ranges), (n,), device=env.device)
-    use_buf = torch.rand(n, device=env.device) < buffer_ratio
-    p = torch.where(use_buf, torch.randint(len(x_ranges), PHASE_DONE, (n,), device=env.device), p)
-    for k in range(len(x_ranges), PHASE_DONE):
+    # 이동 번호 뽑기: 1 ~ 정지 중 무작위, 저장된 상태가 없는 번호는 처음(0)부터
+    moves = torch.randint(1, tracker.done_move, (n,), device=env.device)
+    moves[torch.rand(n, device=env.device) >= buffer_ratio] = 0
+    for k in range(1, tracker.done_move):
         if k not in buf:
-            p[p == k] = PHASE_APPROACH
-    get_phase(env)[env_ids] = p
+            moves[moves == k] = 0
+    tracker.reset(env_ids, moves)
 
-    
     asset = env.scene["robot"]
 
-    hand = p < len(x_ranges)
-    ids = env_ids[hand]
+    ids = env_ids[moves == 0]
     if len(ids):
-        lo, hi = torch.tensor(x_ranges, device=env.device)[p[hand]].unbind(-1)
         pose = asset.data.default_root_pose.torch[ids].clone()
         pose[:, :3] += env.scene.env_origins[ids]
-        pose[:, 0] += lo + (hi - lo) * torch.rand(len(ids), device=env.device)
+        pose[:, 0] += x_noise * (2.0 * torch.rand(len(ids), device=env.device) - 1.0)
         asset.write_root_pose_to_sim_index(root_pose=pose, env_ids=ids)
 
     J = asset.num_joints
     for k, states in buf.items():
-        ids = env_ids[p == k]
+        ids = env_ids[moves == k]
         if len(ids) == 0:
             continue
         s = states[torch.randint(len(states), (len(ids),), device=env.device)]
@@ -169,188 +359,107 @@ def reset_stair_phase(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
         asset.write_joint_velocity_to_sim_index(velocity=s[:, 13 + J:], env_ids=ids)
 
 
-class stair_phase_reward(ManagerTermBase):
-    """계단 오르기 보상. 매 step 다음 순서로 계산한다.
-    1. 측정: 발끝 위치, 쌍별 단 번호, 올라갈 단(target)
-    2. 최고기록 갱신량: 전진/발 높이의 신기록만 보상 (제자리 왕복으로는 못 받음)
-    3. phase별 진행 보상 + 완료 판정
-       APPROACH: 앞발 x 전진 → 앞발이 첫 수직면 바로 앞에 도달하면 완료
-       MOVE_*: 옮기는 쌍의 발 높이 + 몸통 x (중간발은 중간발 x 추가, 뒷발은 뒷발 x + 몸통 x × rear_body_fwd) → 두 발 다 target 단을 디디면 완료
-       SETTLE: 기본 자세로 정지한 정도 → 멈춘 상태를 hold_time 동안 유지하면 완료
-    4. 다음 phase 고르기 (완료 시 bonus 1회)
-    5. 매 step 보상: 단 위 유지(hold), 몸통 전진(body_fwd), 뒷발 지지(support), 옮기는 발의 높이(lift_hold), 나머지 발 접지(stance)"""
-
-    def __init__(self, cfg, env):
-        super().__init__(cfg, env)
-        asset_cfg = cfg.params["asset_cfg"]
-        names = env.scene[asset_cfg.name].body_names
-        self.offset = tip_offsets([names[i] for i in asset_cfg.body_ids], env.device)
-        self.best_x = torch.zeros(env.num_envs, device=env.device)
-        self.best_bx = torch.zeros(env.num_envs, device=env.device)
-        self.best_mx = torch.zeros(env.num_envs, device=env.device)
-        self.best_rx = torch.zeros(env.num_envs, device=env.device)
-        self.best_z = torch.zeros(env.num_envs, len(asset_cfg.body_ids), device=env.device)
-        self.target = torch.ones(env.num_envs, device=env.device)  # 지금 옮기는 쌍이 올라갈 단 번호
-        self.steady_time = torch.zeros(env.num_envs, device=env.device)  # SETTLE에서 멈춘 상태를 유지한 시간 [s]
-        self.need_init = torch.ones(env.num_envs, dtype=torch.bool, device=env.device)
-        self.last_phase = torch.zeros(env.num_envs, device=env.device)
-        self.last_level = torch.zeros(env.num_envs, device=env.device)
+# ===== 보상 =====
+class stair_move_bonus(ManagerTermBase):
+    """목표: 이동을 마칠 때마다 1번 (weight = 이동 한 번의 점수). 끝난 에피소드의 진행도도 로그로 남긴다."""
 
     def reset(self, env_ids=None):
-        env_ids = slice(None) if env_ids is None else env_ids
-        self.need_init[env_ids] = True
-        self.steady_time[env_ids] = 0.0
-        ended_phase = self.last_phase[env_ids]  # 끝난 에피소드의 phase
-        self._env.extras["log"]["Metrics/stair_phase"] = ended_phase.mean()
-        self._env.extras["log"]["Metrics/stair_level"] = self.last_level[env_ids].mean()  # 끝난 에피소드의 쌍별 평균 단
-        self._env.extras["log"]["Metrics/stair_reached_top"] = (ended_phase >= PHASE_SETTLE).float().mean()  # 꼭대기 도달 비율
-        self._env.extras["log"]["Metrics/stair_success"] = (ended_phase == PHASE_DONE).float().mean()  # 정지까지 성공한 비율
+        tracker = get_tracker(self._env)
+        ended = tracker.ended_move[slice(None) if env_ids is None else env_ids]
+        log = self._env.extras["log"]
+        log["Metrics/stair_move"] = ended.float().mean()
+        log["Metrics/stair_level"] = (ended // NUM_STAGES).float().mean()
+        log["Metrics/stair_reached_top"] = (ended >= tracker.settle_move).float().mean()  # 꼭대기 도달 비율
+        log["Metrics/stair_success"] = (ended == tracker.done_move).float().mean()  # 정지까지 성공한 비율
 
-    def _start_target(self, phase, levels, stairs):
-        """리셋 직후의 target. 저장된 상태에서 시작하면 그 phase에 맞는 단을 지금 자세에서 계산한다."""
-        moving_pair = (phase - PHASE_MOVE_FRONT).clamp(0, len(PAIRS) - 1)
-        target = levels.gather(1, moving_pair.unsqueeze(1)).squeeze(1) + 1  # MOVE_*: 그 쌍의 지금 단 + 1
-        target = target.masked_fill(phase == PHASE_APPROACH, 1.0)
-        return target.masked_fill(phase == PHASE_SETTLE, float(stairs.num_steps))
+    def __call__(self, env):
+        tracker = get_tracker(env)
+        tracker.update()
+        return tracker.just_done.float() / env.step_dt
 
-    def _next_phase(self, phase, levels, stairs):
-        """지금 phase를 끝냈을 때 넘어갈 phase. SETTLE → DONE, 나머지 → 가장 낮은 쌍의 MOVE (전부 꼭대기면 SETTLE)."""
-        next_phase = PHASE_MOVE_FRONT + levels.argmin(1)
-        next_phase = next_phase.masked_fill(levels.min(1).values >= stairs.num_steps, PHASE_SETTLE)
-        return next_phase.masked_fill(phase == PHASE_SETTLE, PHASE_DONE)
 
-    def _settle_state(self, env, asset_cfg, settle, feet_on_top):
-        """SETTLE 판정. 반환: score (N) 0~1 정지 점수, steady (N) 멈춘 상태 여부."""
-        data = env.scene[asset_cfg.name].data
-        pose_error = (data.joint_pos.torch - data.default_joint_pos.torch).pow(2).mean(1).sqrt()
-        tilt = data.projected_gravity_b.torch[:, :2].norm(dim=1)
-        speed = data.root_vel_w.torch.norm(dim=1)
-        score = (feet_on_top.float().mean(1)
-                 * torch.exp(-(pose_error / settle.pose_std) ** 2)
-                 * torch.exp(-(tilt / settle.tilt_std) ** 2)
-                 * torch.exp(-(speed / settle.speed_std) ** 2))
-        steady = (feet_on_top.all(1) & (pose_error < settle.pose_tol)
-                  & (tilt < settle.tilt_tol) & (speed < settle.speed_tol))
-        return score, steady
+def _score(env, name: str) -> torch.Tensor:
+    tracker = get_tracker(env)
+    tracker.update()
+    return getattr(tracker, name)
 
-    def _stance_feet(self, phase, num_feet):
-        """딛고 있으면 보상을 받는 발 (N, 발 수). MOVE_*: 옮기는 쌍을 뺀 4발, SETTLE: 6발, 그 외: 없음 (APPROACH는 걸어야 한다)."""
-        stance = ((phase >= PHASE_MOVE_FRONT) & (phase <= PHASE_SETTLE)).unsqueeze(1).repeat(1, num_feet)
-        for k, feet in MOVE_PHASES.items():
-            stance[:, feet] &= (phase != k).unsqueeze(1)
-        return stance
 
-    def __call__(self, env, asset_cfg, sensor_cfg, stairs, swing_clearance: float = 0.08, contact_tol: float = 0.03,
-                 bonus: float = 1.0, hold: float = 1.0, rear_body_fwd: float = 0.5, support: float = 0.5,
-                 support_margin: float = 0.05, body_fwd: float = 1.0, fwd_ahead: float = 0.18,
-                 fwd_ahead_before_middle: float = 0.05, lift_hold: float = 1.0, stance: float = 0.3,
-                 settle: SettleCfg = SettleCfg()):
-        # ----- 1. 측정 -----
-        tips = feet_tip_pos(env, asset_cfg, self.offset)
-        terrain = stairs_terrain_height(stairs, tips[..., 0], tips[..., 1])
-        levels = pair_levels(stairs, terrain)
-        phase = get_phase(env)
-        self.target = torch.where(self.need_init, self._start_target(phase, levels, stairs), self.target)
+def stair_feet_tracking(env) -> torch.Tensor:
+    """과정: 옮기는 발이 경유점을 거쳐 착지점으로."""
+    return _score(env, "feet_score")
 
-        top = (self.target * stairs.step_height).unsqueeze(1)  # 올라갈 단 높이 (N, 1)
-        riser = stairs.x0 + (self.target - 1) * stairs.tread   # 올라갈 단 수직면 x
-        approach_x = stairs.x0 - 0.05
-        x = tips[:, FRONT, 0].min(dim=1).values.clamp(max=approach_x)  # 두 앞발 중 뒤처진 발
-        z = torch.minimum(tips[..., 2], top + swing_clearance)  # 올라갈 단 + swing_clearance 위로는 보상 없음
-        bx = env.scene[asset_cfg.name].data.root_pos_w.torch[:, 0] - env.scene.env_origins[:, 0]
-        # 몸통 전진 보상의 상한. 중간발이 올라가기 전에 몸통이 너무 앞서면 중간다리가 단 모서리에 끼므로 상한을 낮춘다
-        # (몸통이 수직면 + 0.05에 있으면 중간발의 기본 위치가 이미 단 위라서, 들었다 내리기만 해도 딛을 수 있다)
-        before_middle = (phase == PHASE_MOVE_FRONT) | (phase == PHASE_MOVE_MIDDLE)
-        body_limit = riser + torch.where(before_middle, fwd_ahead_before_middle, fwd_ahead)
-        capped_bx = torch.minimum(bx, body_limit)
-        mx = torch.minimum(tips[:, MIDDLE, 0].min(dim=1).values, riser + 0.05)  # 두 중간발 중 뒤처진 발 (단 위 5cm까지)
-        rx = torch.minimum(tips[:, REAR, 0].min(dim=1).values, riser + 0.05)  # 두 뒷발 중 뒤처진 발 (단 위 5cm까지)
-        # 들기 점수 (0~1) = 높이 × x 배율
-        # 높이: 지금 단에서 올라갈 단까지 얼마나 올라왔는지. 단 높이에서 잘라서 단에 내려놓아도 점수가 줄지 않는다
-        lift_height = ((tips[..., 2] - (top - stairs.step_height)) / stairs.step_height).clamp(0.0, 1.0)
-        # x 배율: 수직면 10cm 앞까지는 0.5, 수직면에 다가갈수록 올라서 수직면에서 1 → 단 앞에서 들고 버티면 절반만 받는다
-        over_step = ((tips[..., 0] - riser.unsqueeze(1) + 0.1) / 0.1).clamp(0.0, 1.0)
-        lift_score = lift_height * (0.5 + 0.5 * over_step)
-        # 올라갈 단 이상을 딛고 있음: 발 아래 지형 ≥ 그 단 높이, 지형과의 높이 차 contact_tol 이내 (발이 단보다 낮으면 안 침)
-        contact = (tips[..., 2] - terrain).abs() < contact_tol
-        on = (terrain >= top - 1e-3) & contact
-        # 실제로 디딘 발: 접촉 센서가 닿았다고 하고(공중 시간 0) 발끝도 지형 근처 (정강이만 수직면에 닿은 경우를 거른다)
-        air_time = env.scene.sensors[sensor_cfg.name].data.current_air_time.torch[:, sensor_cfg.body_ids]
-        grounded = (air_time == 0) & contact
 
-        # ----- 2. 최고기록 갱신량 -----
-        self.best_x = torch.where(self.need_init, x, self.best_x)
-        self.best_bx = torch.where(self.need_init, capped_bx, self.best_bx)
-        self.best_mx = torch.where(self.need_init, mx, self.best_mx)
-        self.best_rx = torch.where(self.need_init, rx, self.best_rx)
-        self.best_z = torch.where(self.need_init.unsqueeze(1), z, self.best_z)
-        self.need_init[:] = False
-        gx = (x - self.best_x).clamp(min=0)
-        gbx = (capped_bx - self.best_bx).clamp(min=0)
-        gmx = (mx - self.best_mx).clamp(min=0)
-        grx = (rx - self.best_rx).clamp(min=0)
-        gz = (z - self.best_z).clamp(min=0)
-        self.best_x = torch.maximum(self.best_x, x)
-        self.best_bx = torch.maximum(self.best_bx, capped_bx)
-        self.best_mx = torch.maximum(self.best_mx, mx)
-        self.best_rx = torch.maximum(self.best_rx, rx)
-        self.best_z = torch.maximum(self.best_z, z)
+def stair_body_pose(env) -> torch.Tensor:
+    """과정: 몸통이 표의 위치로."""
+    return _score(env, "body_score")
 
-        # ----- 3. phase별 진행 보상 + 완료 판정 -----
-        gain = torch.zeros(env.num_envs, device=env.device)
-        lift_reward = torch.zeros(env.num_envs, device=env.device)
-        done = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
-        stance_count = (self._stance_feet(phase, tips.shape[1]) & grounded).sum(1).float()  # phase가 바뀌기 전에 센다
 
-        now = phase == PHASE_APPROACH
-        gain += gx * now
-        done |= now & (self.best_x >= approach_x)
+def stair_com_margin(env) -> torch.Tensor:
+    """공통 조건: 디딘 발 안쪽에 무게중심."""
+    return _score(env, "com_score")
 
-        for k, feet in MOVE_PHASES.items():
-            now = phase == k
-            gain += gz[:, feet].sum(1) * now
-            lift_reward += lift_score[:, feet].mean(1) * now
-            done |= now & on[:, feet].all(1)
-        gain += gbx * (phase == PHASE_MOVE_FRONT)
-        gain += (gmx + gbx) * (phase == PHASE_MOVE_MIDDLE)
-        # 뒷발은 몸을 밀지 않고 다리를 접어 단 안쪽으로
-        gain += (grx + rear_body_fwd * gbx) * (phase == PHASE_MOVE_REAR)
 
-        is_settle = phase == PHASE_SETTLE
-        # SETTLE에 들어가도 손해가 없도록 lift_hold 최댓값을 그대로 준다. 줄어들면 일부러 뒷발을 든 채로 머무른다
-        lift_reward += is_settle
-        settle_score, steady = self._settle_state(env, asset_cfg, settle, on)
-        settle_score = settle_score * is_settle
-        # 멈춘 상태가 끊기면 시간을 처음부터 다시 잰다
-        self.steady_time = torch.where(steady & is_settle, self.steady_time + env.step_dt, torch.zeros_like(self.steady_time))
-        done |= is_settle & (self.steady_time >= settle.hold_time)
+def stair_stance_contact(env) -> torch.Tensor:
+    """공통 조건: 옮기는 쌍을 뺀 발은 접지."""
+    return _score(env, "stance_score")
 
-        # ----- 4. 다음 phase -----
-        # 새 phase는 지금부터 다시 기록
-        self.best_z[done] = z[done]
-        self.best_bx[done] = bx[done]
-        self.best_mx[done] = mx[done]
-        self.best_rx[done] = rx[done]
-        next_target = (levels.min(1).values + 1).clamp(max=stairs.num_steps)  # SETTLE의 target = 꼭대기 단
-        self.target = torch.where(done, next_target, self.target)
-        phase[:] = torch.where(done, self._next_phase(phase, levels, stairs), phase)
-        self.last_phase = phase.float()
-        self.last_level = levels.mean(1)
-        # MOVE_FRONT 다음 phase에 막 들어선 상태 저장 → 리셋 때 시작 상태로 사용 (APPROACH, MOVE_FRONT는 x_ranges로 시작)
-        save = done & (phase > PHASE_MOVE_FRONT) & (phase < PHASE_DONE)
-        if save.any():
-            save_phase_states(env, save.nonzero().squeeze(-1), phase[save])
 
-        # ----- 5. 공통 보상 -----
-        # 유지 보상: 1단 이상을 딛고 있는 다리 쌍마다 매 step
-        on_step = (terrain >= stairs.step_height - 1e-3) & contact
-        held = sum(on_step[:, p].all(1).float() for p in PAIRS)
-        # 뒷발 지지: 몸통(무게중심)이 중간발보다 support_margin 앞 → 뒷발을 들어도 안 넘어짐 (매 step, 상한 1)
-        margin = (bx - tips[:, MIDDLE, 0].mean(1)) / support_margin
-        stable = margin.clamp(0.0, 1.0) * (phase == PHASE_MOVE_REAR)
-        # SETTLE에 들어가도 손해가 없도록 support 최댓값을 그대로 준다. 줄어들면 일부러 뒷발 phase에 머무른다
-        stable = stable + (phase == PHASE_SETTLE)
-        # 몸통 전진: 앞에 있을수록 매 step (hold와 같은 크기로 경쟁), body_limit에서 포화 → 앞발이 다음 수직면에 안 닿게
-        fwd = capped_bx.clamp(min=0.0)
-        return ((gain + bonus * done) / env.step_dt + hold * held + support * stable + body_fwd * fwd
-                + lift_hold * lift_reward + stance * stance_count + settle.reward * settle_score)
+def stair_settle_still(env) -> torch.Tensor:
+    """정지: 꼭대기에서 시작 자세로 멈춤."""
+    return _score(env, "settle_score")
+
+
+# ===== 종료 =====
+def stair_success(env) -> torch.Tensor:
+    tracker = get_tracker(env)
+    return tracker.move >= tracker.done_move
+
+
+def stair_move_timed_out(env) -> torch.Tensor:
+    tracker = get_tracker(env)
+    limit = torch.where(tracker.move == tracker.settle_move,
+                        tracker.gait.settle_time_limit, tracker.gait.move_time_limit)
+    return tracker.move_time >= limit
+
+
+# ===== 관측 =====
+def stair_stage_obs(env) -> torch.Tensor:
+    """지금 이동 단계 one-hot (N, 5). 마지막 칸 = 정지."""
+    tracker = get_tracker(env)
+    stage, _ = tracker.stage_and_level()
+    return F.one_hot(torch.where(tracker.move >= tracker.settle_move, NUM_STAGES, stage), STAGE_OBS_SIZE).float()
+
+
+def stair_feet_target_obs(env) -> torch.Tensor:
+    """옮기는 두 발 각각의 현재 목표까지 (x, z) 오차와 경유 완료 여부 (N, 6). 정지 중에는 0."""
+    tracker = get_tracker(env)
+    stage, level = tracker.stage_and_level()
+    riser, top = tracker.riser_and_top(level)
+    (via_x, via_z), (land_x, land_z) = tracker.foot_targets(stage, riser, top)
+
+    feet = tracker.table_feet[stage]  # (N, 2)
+    rows = torch.arange(env.num_envs, device=env.device).unsqueeze(1)
+    tips = tracker.tips()[rows, feet]  # (N, 2, 3)
+    cleared = tracker.cleared[rows, feet]  # (N, 2)
+    target_x = torch.where(cleared, land_x.unsqueeze(1), via_x.unsqueeze(1))
+    target_z = torch.where(cleared, land_z.unsqueeze(1), via_z.unsqueeze(1))
+    obs = torch.cat([target_x - tips[..., 0], target_z - tips[..., 2], cleared.float()], dim=1)
+    return obs * (tracker.move < tracker.settle_move).unsqueeze(1)
+
+
+def stair_body_target_obs(env) -> torch.Tensor:
+    """몸통 목표까지 오차 (x, z), 옆 위치, yaw 오차 (N, 4)."""
+    tracker = get_tracker(env)
+    stage, level = tracker.stage_and_level()
+    riser, _ = tracker.riser_and_top(level)
+    target_x, target_z = tracker.body_target(stage, level, tracker.moving_feet(stage), riser)
+    body_pos, yaw_error = tracker.body_state()
+    return torch.stack([target_x - body_pos[:, 0], target_z - body_pos[:, 2], body_pos[:, 1], yaw_error], dim=1)
+
+
+def stair_time_left_obs(env) -> torch.Tensor:
+    """이번 이동의 시간제한 대비 쓴 시간 (N, 1). 정지 중에는 유지 시간 비율."""
+    tracker = get_tracker(env)
+    limit = torch.where(tracker.move == tracker.settle_move,
+                        tracker.gait.settle_time_limit, tracker.gait.move_time_limit)
+    return (tracker.move_time / limit).unsqueeze(1)

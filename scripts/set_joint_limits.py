@@ -11,7 +11,7 @@ ROBOT_USDA = Path(__file__).resolve().parents[1] / "src" / "RLforHexapod" / "ass
 # 관절 이름 접미사 -> (lower, upper) [deg]
 NEW_LIMITS = {
     "_femur": (0.0, 180.0),
-    "_tibia": (-180.0, 0.0),
+    "_tibia": (-250.0, -70.0),
 }
 
 if __name__ == "__main__":
