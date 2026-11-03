@@ -272,7 +272,7 @@ class StairsObservationsCfg(ObservationsCfg):
             "asset_cfg": SceneEntityCfg("robot", body_names="tibia.*"), "stairs": STAIRS})
         # 2. 단 높이 (1)
         step_height = ObsTerm(func=mdp.stairs_step_height, params={"stairs": STAIRS})
-        # 3. 지금 할 일: 단계 (12), 옮기는 발 위치 (4), 전진 목표까지 거리와 방향 (3)
+        # 3. 지금 할 일: 단계 (12), 옮기는 발 위치와 tibia 변화 (6), 전진 목표까지 거리와 방향 (3)
         phase = ObsTerm(func=mdp.stair_phase_obs)
         feet_target = ObsTerm(func=mdp.stair_feet_target_obs)
         body_target = ObsTerm(func=mdp.stair_body_target_obs)

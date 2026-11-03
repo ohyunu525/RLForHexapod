@@ -8,6 +8,9 @@
 
     전진: 몸통 x          올리기: 옮기는 발의 z          내려놓기: 옮기는 발이 올라갈 단에 닿았는가
 
+발은 femur를 올려서 든다. tibia를 접으면 발이 몸 안쪽으로 들어오므로, 올리기와 든 채 전진에서는
+tibia를 접거나 femur를 내린 발의 보상과 완료를 인정하지 않는다.
+
 보상은 신기록 갱신량과 단계 완료 보너스뿐이라, 가만히 있으면 점수가 들어오지 않는다.
 단계 번호 move는 앞으로만 증가한다. 한 step의 계산은 StairTracker.update()에 모여 있다.
 """
@@ -25,6 +28,8 @@ from .observations import stairs_terrain_height, tip_offsets
 # ===== 다리 =====
 # 발 순서: tibia(L1), tibia_2 ~ tibia_6
 FOOT_BODIES = ["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"]
+FEMUR_JOINTS = [f"L{i}_femur" for i in range(1, 7)]
+TIBIA_JOINTS = [f"L{i}_tibia" for i in range(1, 7)]
 FRONT, MIDDLE, REAR = [0, 5], [1, 4], [2, 3]
 
 # ===== 단계 =====
@@ -68,6 +73,8 @@ class StairGaitCfg:
     # 올리기
     raise_height: float = 0.03   # 단 윗면 위로 이만큼 올라오면 올리기 완료
     raise_reward_cap: float = 0.05  # 단 윗면 위로 이 높이까지만 보상
+    tibia_fold_tol: float = 0.17 # 올리기 시작할 때보다 tibia를 이만큼 넘게 접으면 인정 안 함 [rad, 약 10°]
+    femur_drop_tol: float = 0.09 # 올리기 시작할 때보다 femur를 이만큼 넘게 내리면 인정 안 함 [rad, 약 5°]
 
     # 접지
     tip_height: float = 0.013    # 딛었을 때 발끝 추정점이 지면보다 높은 만큼 (메시 최저점과의 차이)
@@ -94,6 +101,8 @@ class StairTracker:
         self.sensor = env.scene.sensors["contact_forces"]
         self.foot_ids, _ = self.asset.find_bodies(FOOT_BODIES, preserve_order=True)
         self.sensor_ids, _ = self.sensor.find_bodies(FOOT_BODIES, preserve_order=True)
+        self.femur_ids, _ = self.asset.find_joints(FEMUR_JOINTS, preserve_order=True)
+        self.tibia_ids, _ = self.asset.find_joints(TIBIA_JOINTS, preserve_order=True)
         self.tip_offset = tip_offsets(FOOT_BODIES, env.device)
 
         # 단계 번호: 0 ~ final_advance - 1 = 계단, final_advance = 마지막 전진, settle_move = 정지, done_move = 성공
@@ -121,6 +130,9 @@ class StairTracker:
         self.best_body_x = torch.zeros(n, device=device)
         self.best_foot_x = torch.zeros(n, device=device)
         self.best_z = torch.zeros(n, num_feet, device=device)
+        self.need_leg_ref = torch.ones(n, dtype=torch.bool, device=device)  # 올리기 시작 → 기준 각도를 지금 값으로
+        self.femur_ref = torch.zeros(n, num_feet, device=device)
+        self.tibia_ref = torch.zeros(n, num_feet, device=device)
         self.steady_time = torch.zeros(n, device=device)  # 멈춘 상태를 유지한 시간 [s]
         self.ended_move = torch.zeros(n, dtype=torch.long, device=device)  # 끝난 에피소드의 단계 번호 (로그용)
         self._updated_at = -1
@@ -184,6 +196,15 @@ class StairTracker:
         near_ground = (tips[..., 2] - terrain - gait.tip_height).abs() < gait.contact_tol
         body_x = self.body_state()[0][:, 0]
 
+        # femur로 들고 있는 발: 올리기 시작할 때보다 tibia를 접거나 femur를 내리지 않음
+        femur = self.asset.data.joint_pos.torch[:, self.femur_ids]
+        tibia = self.asset.data.joint_pos.torch[:, self.tibia_ids]
+        self.femur_ref = torch.where(self.need_leg_ref.unsqueeze(1), femur, self.femur_ref)
+        self.tibia_ref = torch.where(self.need_leg_ref.unsqueeze(1), tibia, self.tibia_ref)
+        self.need_leg_ref[:] = False
+        by_femur = (tibia >= self.tibia_ref - gait.tibia_fold_tol) & (femur >= self.femur_ref - gait.femur_drop_tol)
+        moving_by_femur = (by_femur | ~moving).all(1)
+
         # 현재 값 (보상 상한으로 자른 값)
         limit_x = riser + self.table_body_x[phase]
         capped_body_x = torch.minimum(body_x, limit_x)
@@ -197,23 +218,24 @@ class StairTracker:
         self.best_z = torch.where(self.need_init.unsqueeze(1), capped_z, self.best_z)
         self.need_init[:] = False
 
-        # 발을 든 채 전진: 옮기는 두 발이 단 높이 아래로 떨어지면 보상도 신기록도 멈춘다
-        feet_up = ((tips[..., 2] >= top.unsqueeze(1)) | ~moving).all(1)
+        # 발을 든 채 전진: 옮기는 두 발이 단 높이 아래로 떨어지거나 tibia를 접으면 보상도 신기록도 멈춘다
+        feet_up = ((tips[..., 2] >= top.unsqueeze(1)) | ~moving).all(1) & moving_by_femur
         body_counts = advancing | (carrying & feet_up)
         foot_counts = carrying & feet_up
 
         # 보상: 신기록 갱신량 (단위 m)
         gain_body = (capped_body_x - self.best_body_x).clamp(min=0.0) * body_counts
         gain_foot = (capped_foot_x - self.best_foot_x).clamp(min=0.0) * foot_counts
-        gain_z = ((capped_z - self.best_z).clamp(min=0.0) * moving).sum(1) * lifting
+        z_counts = lifting.unsqueeze(1) & moving & by_femur  # 올리기: femur로 들고 있는 발만
+        gain_z = ((capped_z - self.best_z).clamp(min=0.0) * z_counts).sum(1)
         self.progress = gain_body + gait.carry_foot_gain * gain_foot + gain_z
         self.best_body_x = torch.where(body_counts, torch.maximum(self.best_body_x, capped_body_x), self.best_body_x)
         self.best_foot_x = torch.where(foot_counts, torch.maximum(self.best_foot_x, capped_foot_x), self.best_foot_x)
-        self.best_z = torch.where(lifting.unsqueeze(1), torch.maximum(self.best_z, capped_z), self.best_z)
+        self.best_z = torch.where(z_counts, torch.maximum(self.best_z, capped_z), self.best_z)
 
         # 단계 완료 조건
         advance_done = advancing & (self.best_body_x >= limit_x - gait.advance_tol)
-        lift_done = lifting & ((tips[..., 2] >= (top + gait.raise_height).unsqueeze(1)) | ~moving).all(1)
+        lift_done = lifting & moving_by_femur & ((tips[..., 2] >= (top + gait.raise_height).unsqueeze(1)) | ~moving).all(1)
         carry_done = carrying & feet_up & (lagging_foot_x >= riser + gait.over_margin)
         on_target = (terrain >= top.unsqueeze(1) - 1e-3) & near_ground & (air_time == 0)
         place_done = placing & (on_target | ~moving).all(1)
@@ -235,6 +257,7 @@ class StairTracker:
         self.just_done = ((advance_done | lift_done | carry_done | place_done) & all_kept) | settle_done
         self.move = self.move + self.just_done.long()
         self.need_init |= self.just_done
+        self.need_leg_ref |= self.just_done & (self.table_kind[self.phase_and_level()[0]] == LIFT)
 
         # 새 단계에 막 들어선 안정적인 상태 저장 → 리셋 때 시작 상태로 사용
         save = self.just_done & (self.move < self.done_move) & (speed < gait.save_speed_max)
@@ -245,6 +268,7 @@ class StairTracker:
         self.ended_move[env_ids] = self.move[env_ids]
         self.move[env_ids] = moves
         self.need_init[env_ids] = True
+        self.need_leg_ref[env_ids] = True
         self.steady_time[env_ids] = 0.0
         self.just_done[env_ids] = False
         self.progress[env_ids] = 0.0
@@ -395,14 +419,16 @@ def stair_phase_obs(env) -> torch.Tensor:
 
 
 def stair_feet_target_obs(env) -> torch.Tensor:
-    """옮기는 두 발의 위치: 수직면 기준 x, 단 윗면 기준 z (N, 4). 옮기는 발이 없으면 0."""
+    """옮기는 두 발의 위치: 수직면 기준 x, 단 윗면 기준 z, 기준 각도 대비 tibia 변화 (N, 6). 옮기는 발이 없으면 0."""
     tracker = get_tracker(env)
     phase, level = tracker.phase_and_level()
     riser, top = tracker.riser_and_top(level)
     feet = tracker.table_feet[phase]  # (N, 2)
     rows = torch.arange(env.num_envs, device=env.device).unsqueeze(1)
     tips = tracker.tips()[rows, feet]  # (N, 2, 3)
-    obs = torch.cat([tips[..., 0] - riser.unsqueeze(1), tips[..., 2] - top.unsqueeze(1)], dim=1)
+    tibia = tracker.asset.data.joint_pos.torch[:, tracker.tibia_ids]
+    tibia_change = (tibia - tracker.tibia_ref)[rows, feet]  # (N, 2)
+    obs = torch.cat([tips[..., 0] - riser.unsqueeze(1), tips[..., 2] - top.unsqueeze(1), tibia_change], dim=1)
     return obs * tracker.moving_feet(phase).any(1, keepdim=True)
 
 
