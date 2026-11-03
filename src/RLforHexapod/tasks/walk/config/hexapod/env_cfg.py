@@ -210,7 +210,7 @@ class StairsTerminationsCfg(TerminationsCfg):
 
 @configclass
 class StairsEventsCfg(EventsCfg):
-    # x_ranges 순서 = 단계 번호 (몸통 x 범위). 0번 전진: 수직면까지 멀리서, 1번 앞발 올리기: 앞발이 수직면 3~5cm 앞
+    # x_ranges 순서 = 단계 번호 (몸통 x 범위). 0번 전진: 수직면까지 멀리서, 1번 앞발 옮기기: 앞발이 수직면 3~5cm 앞
     stair_reset = EventTerm(func=mdp.reset_stair_state, mode="reset",
                             params={"x_ranges": ((-0.1, 0.1), (0.30, 0.32)), "buffer_ratio": 0.5})
 
@@ -219,10 +219,12 @@ class StairsEventsCfg(EventsCfg):
 class StairsRewardsCfg:
     # 단계를 마칠 때마다 1번 (weight = 점수)
     phase_bonus = RewTerm(func=mdp.stair_phase_bonus, weight=10.0)
-    # 지금 단계의 신기록 갱신량. 전진: 몸통 x, 올리기: tibia 중심 높이 (weight = 1m당 점수)
+    # 지금 단계의 신기록 갱신량. 전진: 몸통 x, 옮기기: 발끝 높이 + 몸통 x (weight = 1m당 점수)
     progress = RewTerm(func=mdp.stair_progress, weight=30.0)
-    # 올리기 중 tibia가 지면에 수직일수록 (weight = 초당 최대 점수)
-    tibia_vertical = RewTerm(func=mdp.stair_tibia_vertical, weight=2.0)
+    # 모든 단계에서 여섯 다리의 tibia가 지면에 수직일수록 (weight = 초당 최대 점수)
+    tibia_vertical = RewTerm(func=mdp.stair_tibia_vertical, weight=0.5)
+    # 옮기기 중 제자리에서 떨어진 나머지 발의 수 (weight = 발 하나당 초당 벌점)
+    standing_feet_off = RewTerm(func=mdp.stair_standing_feet_off, weight=-1.0)
     # 꼭대기에서 멈출수록 (weight = 초당 최대 점수)
     settle_still = RewTerm(func=mdp.stair_settle_still, weight=4.0)
     # 실패: weight × step_dt(0.02)가 실제 점수 → -10점
@@ -255,7 +257,7 @@ class StairsObservationsCfg(ObservationsCfg):
             "asset_cfg": SceneEntityCfg("robot", body_names="tibia.*"), "stairs": STAIRS})
         # 2. 단 높이 (1)
         step_height = ObsTerm(func=mdp.stairs_step_height, params={"stairs": STAIRS})
-        # 3. 지금 할 일: 단계 (12), 옮기는 발 위치와 tibia 수직도 (6), 전진 목표까지 거리와 방향 (3)
+        # 3. 지금 할 일: 단계 (6), 옮기는 발 위치와 tibia 수직도 (6), 전진 목표까지 거리와 방향 (3)
         phase = ObsTerm(func=mdp.stair_phase_obs)
         feet_target = ObsTerm(func=mdp.stair_feet_target_obs)
         body_target = ObsTerm(func=mdp.stair_body_target_obs)
@@ -277,6 +279,6 @@ class HexapodStairEnvCfg(HexapodEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.episode_length_s = 45.0  # 단마다 11단계 × 3단 + 마지막 전진, 정지
+        self.episode_length_s = 45.0  # 단마다 5단계 × 3단 + 마지막 전진, 정지
 
 
