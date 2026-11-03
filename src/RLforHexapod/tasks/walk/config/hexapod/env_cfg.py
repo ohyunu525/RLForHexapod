@@ -8,7 +8,7 @@ from isaaclab.envs import (
 )
 import RLforHexapod.tasks.walk.mdp as mdp
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.actuators import DCMotorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.managers import SceneEntityCfg
@@ -40,18 +40,24 @@ HEXAPOD_CFG = ArticulationCfg(
         rot=(0.0, 0.0, 0.0, 1.0),
         joint_pos={
             ".*_coxa": 0.0,
-            ".*_femur": math.radians(20.0),  # 0=아래로 수직, 90=수평 (한계 0~270)
-            ".*_tibia": math.radians(-110.0),  # -180=femur 수평일 때 수직 (한계 -270~0)
+            ".*_femur": math.radians(20.0),  # 0=아래로 수직, 90=수평 (한계 0~180)
+            ".*_tibia": math.radians(-110.0),  # -180=femur 수평일 때 수직 (한계 -180~0)
         },
         joint_vel={".*": 0.0},
     ),
     actuators={
-        "legs": ImplicitActuatorCfg(
+        # MJWarp는 관절 속도 한계를 무시하므로 토크-속도 곡선으로 속도를 제한한다.
+        # coxa=MG996R 6V 데이터시트, femur/tibia=RC920DMG 임시값(사양 불명, 7V 실측으로 교체)
+        "legs": DCMotorCfg(
             joint_names_expr=[".*"],   # 18개 관절 전부
-            stiffness=None,
-            damping=None,
+            # None이면 Newton 액추에이터의 kp/kd가 0이 된다.
+            stiffness=100.0,
+            damping=1.0,
             # 감속기 반사 관성(MG996R 급 ~0.005-0.01). 0이면 가벼운 tibia가 불안정
             armature=0.005,
+            saturation_effort={".*_coxa": 1.08, ".*_(femur|tibia)": 1.86},  # 스톨 토크 [N·m]
+            actuator_velocity_limit={".*_coxa": 7.48, ".*_(femur|tibia)": 6.5},  # 무부하 속도 [rad/s]
+            actuator_effort_limit={".*_coxa": 0.75, ".*_(femur|tibia)": 1.3},  # 지속 토크, 스톨의 70% [N·m]
         ),
     },
 )
@@ -110,6 +116,9 @@ class ActionsCfg:
 
 @configclass
 class EventsCfg:
+    # 실제 서보 회전 범위. robot.usda(LFS)의 0~270 override를 시작 시 덮어씀, coxa는 USD의 ±90 그대로
+    joint_limits = EventTerm(func=mdp.set_joint_pos_limits, mode="startup", params={
+        "limits_deg": {".*_femur": (0.0, 180.0), ".*_tibia": (-180.0, 0.0)}})
     # 리셋 때 로봇을 init_state(초기 자세)로 되돌림
     reset_all = EventTerm(func=mdp.reset_scene_to_default, mode="reset")
 
@@ -236,7 +245,7 @@ class StairsRewardsCfg:
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=6.0, params={
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
                                     preserve_order=True),
-        "stairs": STAIRS, "bonus": 40.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "swing_clearance": 0.08,
+        "stairs": STAIRS, "bonus": 40.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "swing_clearance": 0.3,
         "settle": mdp.SettleCfg()})
 
 
