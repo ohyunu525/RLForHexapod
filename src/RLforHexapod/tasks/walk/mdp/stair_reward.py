@@ -178,7 +178,7 @@ class stair_phase_reward(ManagerTermBase):
        MOVE_*: 옮기는 쌍의 발 높이 + 몸통 x (중간발은 중간발 x 추가, 뒷발은 뒷발 x + 몸통 x × rear_body_fwd) → 두 발 다 target 단을 디디면 완료
        SETTLE: 기본 자세로 정지한 정도 → 멈춘 상태를 hold_time 동안 유지하면 완료
     4. 다음 phase 고르기 (완료 시 bonus 1회)
-    5. 매 step 보상: 단 위 유지(hold), 몸통 전진(body_fwd), 뒷발 지지(support), 옮기는 발의 높이(lift_hold)"""
+    5. 매 step 보상: 단 위 유지(hold), 몸통 전진(body_fwd), 뒷발 지지(support), 옮기는 발의 높이(lift_hold), 나머지 발 접지(stance)"""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -233,10 +233,18 @@ class stair_phase_reward(ManagerTermBase):
                   & (tilt < settle.tilt_tol) & (speed < settle.speed_tol))
         return score, steady
 
-    def __call__(self, env, asset_cfg, stairs, swing_clearance: float = 0.08, contact_tol: float = 0.03,
+    def _stance_feet(self, phase, num_feet):
+        """딛고 있으면 보상을 받는 발 (N, 발 수). MOVE_*: 옮기는 쌍을 뺀 4발, SETTLE: 6발, 그 외: 없음 (APPROACH는 걸어야 한다)."""
+        stance = ((phase >= PHASE_MOVE_FRONT) & (phase <= PHASE_SETTLE)).unsqueeze(1).repeat(1, num_feet)
+        for k, feet in MOVE_PHASES.items():
+            stance[:, feet] &= (phase != k).unsqueeze(1)
+        return stance
+
+    def __call__(self, env, asset_cfg, sensor_cfg, stairs, swing_clearance: float = 0.08, contact_tol: float = 0.03,
                  bonus: float = 1.0, hold: float = 1.0, rear_body_fwd: float = 0.5, support: float = 0.5,
                  support_margin: float = 0.05, body_fwd: float = 1.0, fwd_ahead: float = 0.18,
-                 fwd_ahead_before_middle: float = 0.05, lift_hold: float = 1.0, settle: SettleCfg = SettleCfg()):
+                 fwd_ahead_before_middle: float = 0.05, lift_hold: float = 1.0, stance: float = 0.3,
+                 settle: SettleCfg = SettleCfg()):
         # ----- 1. 측정 -----
         tips = feet_tip_pos(env, asset_cfg, self.offset)
         terrain = stairs_terrain_height(stairs, tips[..., 0], tips[..., 1])
@@ -257,11 +265,18 @@ class stair_phase_reward(ManagerTermBase):
         capped_bx = torch.minimum(bx, body_limit)
         mx = torch.minimum(tips[:, MIDDLE, 0].min(dim=1).values, riser + 0.05)  # 두 중간발 중 뒤처진 발 (단 위 5cm까지)
         rx = torch.minimum(tips[:, REAR, 0].min(dim=1).values, riser + 0.05)  # 두 뒷발 중 뒤처진 발 (단 위 5cm까지)
-        # 옮기는 발이 지금 단에서 올라갈 단까지 얼마나 올라왔는지 (0~1). 단 높이에서 잘라서 단에 내려놓아도 점수가 줄지 않는다
-        lift_score = ((tips[..., 2] - (top - stairs.step_height)) / stairs.step_height).clamp(0.0, 1.0)
+        # 들기 점수 (0~1) = 높이 × x 배율
+        # 높이: 지금 단에서 올라갈 단까지 얼마나 올라왔는지. 단 높이에서 잘라서 단에 내려놓아도 점수가 줄지 않는다
+        lift_height = ((tips[..., 2] - (top - stairs.step_height)) / stairs.step_height).clamp(0.0, 1.0)
+        # x 배율: 수직면 10cm 앞까지는 0.5, 수직면에 다가갈수록 올라서 수직면에서 1 → 단 앞에서 들고 버티면 절반만 받는다
+        over_step = ((tips[..., 0] - riser.unsqueeze(1) + 0.1) / 0.1).clamp(0.0, 1.0)
+        lift_score = lift_height * (0.5 + 0.5 * over_step)
         # 올라갈 단 이상을 딛고 있음: 발 아래 지형 ≥ 그 단 높이, 지형과의 높이 차 contact_tol 이내 (발이 단보다 낮으면 안 침)
         contact = (tips[..., 2] - terrain).abs() < contact_tol
         on = (terrain >= top - 1e-3) & contact
+        # 실제로 디딘 발: 접촉 센서가 닿았다고 하고(공중 시간 0) 발끝도 지형 근처 (정강이만 수직면에 닿은 경우를 거른다)
+        air_time = env.scene.sensors[sensor_cfg.name].data.current_air_time.torch[:, sensor_cfg.body_ids]
+        grounded = (air_time == 0) & contact
 
         # ----- 2. 최고기록 갱신량 -----
         self.best_x = torch.where(self.need_init, x, self.best_x)
@@ -285,6 +300,7 @@ class stair_phase_reward(ManagerTermBase):
         gain = torch.zeros(env.num_envs, device=env.device)
         lift_reward = torch.zeros(env.num_envs, device=env.device)
         done = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        stance_count = (self._stance_feet(phase, tips.shape[1]) & grounded).sum(1).float()  # phase가 바뀌기 전에 센다
 
         now = phase == PHASE_APPROACH
         gain += gx * now
@@ -337,4 +353,4 @@ class stair_phase_reward(ManagerTermBase):
         # 몸통 전진: 앞에 있을수록 매 step (hold와 같은 크기로 경쟁), body_limit에서 포화 → 앞발이 다음 수직면에 안 닿게
         fwd = capped_bx.clamp(min=0.0)
         return ((gain + bonus * done) / env.step_dt + hold * held + support * stable + body_fwd * fwd
-                + lift_hold * lift_reward + settle.reward * settle_score)
+                + lift_hold * lift_reward + stance * stance_count + settle.reward * settle_score)
