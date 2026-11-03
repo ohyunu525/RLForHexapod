@@ -194,29 +194,22 @@ class StairsTerminationsCfg(TerminationsCfg):
     # 몸통 중심이 계단 폭(1.0m, stairs_*.usda의 y scale) 밖으로 나가면 실패
     off_stairs = DoneTerm(func=mdp.out_of_stairs_width, params={"half_width": STAIRS.width/2})
     sim_blowup = DoneTerm(func=mdp.joint_vel_out_of_manual_limit, params={"max_velocity": 50.0})
-<<<<<<< HEAD
-    # 모든 쌍이 꼭대기 단 = 성공. time_out=True → critic이 이후 가치를 0으로 자르지 않음 (hold 보상이 끊겨도 손해 아님)
-    success = DoneTerm(func=mdp.stair_phase_reached, params={"phase": mdp.NUM_PHASES}, time_out=True)
-=======
-    # StairsTerminationsCfg에 추가 (time_out=True → 실패가 아니라 시간 종료처럼 처리)
-    success = DoneTerm(func=mdp.stair_phase_reached, params={"phase": mdp.NUM_PHASES}, time_out=True)
-
->>>>>>> 5f7feea5880d4b745e8085267bb10a0b5330ec01
-
+    # 꼭대기에서 기본 자세로 멈추기까지 마치면 성공
+    success = DoneTerm(func=mdp.stair_phase_reached, params={"phase": mdp.PHASE_DONE}, time_out=True)
 
 
 @configclass
 class StairsEventsCfg(EventsCfg):
-    # phase 0: 앞발~수직면 0.25~0.45m, phase 1: 앞발이 수직면 3~5cm 앞 (몸통 x 범위)
+    # x_ranges 순서 = phase 번호 (몸통 x 범위). APPROACH: 앞발~수직면 0.25~0.45m, MOVE_FRONT: 앞발이 수직면 3~5cm 앞
     stair_phase = EventTerm(func=mdp.reset_stair_phase, mode="reset",
                             params={"x_ranges": ((-0.1, 0.1), (0.30, 0.32))})
 
 
 @configclass
 class StairsRewardsCfg:
-    track_lin_vel = RewTerm(func=mdp.track_lin_vel_xy_exp, weight=1.0,
+    track_lin_vel = RewTerm(func=mdp.track_lin_vel_until_settle, weight=1.0,
                             params={"command_name": "base_velocity", "std": 0.5})
-    track_ang_vel = RewTerm(func=mdp.track_ang_vel_z_exp, weight=0.5,
+    track_ang_vel = RewTerm(func=mdp.track_ang_vel_until_settle, weight=0.5,
                             params={"command_name": "base_velocity", "std": 0.5})
     height_progress = RewTerm(func=mdp.base_height_progress, weight=2.5)
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={
@@ -232,17 +225,19 @@ class StairsRewardsCfg:
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-7)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-1e-3)
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    # 중간다리: 항상 켬 (들었으면 내려놓게), 뒷다리: 뒷발 phase(5, 6)에서만 끔
+    # 중간다리: 항상 켬 (들었으면 내려놓게), 뒷다리: 뒷발을 옮기는 phase에서만 끔
     feet_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"])})
     rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]), "skip_phases": (5, 6)})
+        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]),
+        "skip_phases": (mdp.PHASE_MOVE_REAR,)})
     termination_penalty = RewTerm(func=mdp.is_terminated_term, weight=-90.0,
                                   params={"term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup", "sim_nan"]})  # 성공 제외
     stair_phase = RewTerm(func=mdp.stair_phase_reward, weight=6.0, params={
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
                                     preserve_order=True),
-        "stairs": STAIRS, "bonus": 20.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "lift": 0.3})
+        "stairs": STAIRS, "bonus": 40.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "swing_clearance": 0.08,
+        "settle": mdp.SettleCfg()})
 
 
 @configclass

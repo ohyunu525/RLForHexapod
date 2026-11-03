@@ -1,9 +1,20 @@
 import torch
+from isaaclab.envs.mdp import track_ang_vel_z_exp, track_lin_vel_xy_exp
 from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.utils.math import quat_apply
 
 from .observations import tip_offsets
-from .stair_reward import get_phase
+from .stair_reward import PHASE_SETTLE, get_phase
+
+
+def track_lin_vel_until_settle(env, command_name: str, std: float) -> torch.Tensor:
+    """속도 명령 추종 보상. SETTLE에서는 멈춰야 하므로 끈다."""
+    return track_lin_vel_xy_exp(env, std=std, command_name=command_name) * (get_phase(env) != PHASE_SETTLE)
+
+
+def track_ang_vel_until_settle(env, command_name: str, std: float) -> torch.Tensor:
+    """회전 명령 추종 보상. SETTLE에서는 멈춰야 하므로 끈다."""
+    return track_ang_vel_z_exp(env, std=std, command_name=command_name) * (get_phase(env) != PHASE_SETTLE)
 
 
 class base_height_progress(ManagerTermBase):
