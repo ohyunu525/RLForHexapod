@@ -175,10 +175,10 @@ class stair_phase_reward(ManagerTermBase):
     2. 최고기록 갱신량: 전진/발 높이의 신기록만 보상 (제자리 왕복으로는 못 받음)
     3. phase별 진행 보상 + 완료 판정
        APPROACH: 앞발 x 전진 → 앞발이 첫 수직면 바로 앞에 도달하면 완료
-       MOVE_*: 옮기는 쌍의 발 높이 + 몸통 x (뒷발은 뒷발 x + 몸통 x × rear_body_fwd) → 두 발 다 target 단을 디디면 완료
+       MOVE_*: 옮기는 쌍의 발 높이 + 몸통 x (중간발은 중간발 x 추가, 뒷발은 뒷발 x + 몸통 x × rear_body_fwd) → 두 발 다 target 단을 디디면 완료
        SETTLE: 기본 자세로 정지한 정도 → 멈춘 상태를 hold_time 동안 유지하면 완료
     4. 다음 phase 고르기 (완료 시 bonus 1회)
-    5. 공통 보상: 단 위 유지(hold), 몸통 전진(body_fwd), 뒷발 지지(support)"""
+    5. 매 step 보상: 단 위 유지(hold), 몸통 전진(body_fwd), 뒷발 지지(support), 옮기는 발의 높이(lift_hold)"""
 
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
@@ -187,6 +187,7 @@ class stair_phase_reward(ManagerTermBase):
         self.offset = tip_offsets([names[i] for i in asset_cfg.body_ids], env.device)
         self.best_x = torch.zeros(env.num_envs, device=env.device)
         self.best_bx = torch.zeros(env.num_envs, device=env.device)
+        self.best_mx = torch.zeros(env.num_envs, device=env.device)
         self.best_rx = torch.zeros(env.num_envs, device=env.device)
         self.best_z = torch.zeros(env.num_envs, len(asset_cfg.body_ids), device=env.device)
         self.target = torch.ones(env.num_envs, device=env.device)  # 지금 옮기는 쌍이 올라갈 단 번호
@@ -235,7 +236,7 @@ class stair_phase_reward(ManagerTermBase):
     def __call__(self, env, asset_cfg, stairs, swing_clearance: float = 0.08, contact_tol: float = 0.03,
                  bonus: float = 1.0, hold: float = 1.0, rear_body_fwd: float = 0.5, support: float = 0.5,
                  support_margin: float = 0.05, body_fwd: float = 1.0, fwd_ahead: float = 0.18,
-                 settle: SettleCfg = SettleCfg()):
+                 fwd_ahead_before_middle: float = 0.05, lift_hold: float = 1.0, settle: SettleCfg = SettleCfg()):
         # ----- 1. 측정 -----
         tips = feet_tip_pos(env, asset_cfg, self.offset)
         terrain = stairs_terrain_height(stairs, tips[..., 0], tips[..., 1])
@@ -249,28 +250,40 @@ class stair_phase_reward(ManagerTermBase):
         x = tips[:, FRONT, 0].min(dim=1).values.clamp(max=approach_x)  # 두 앞발 중 뒤처진 발
         z = torch.minimum(tips[..., 2], top + swing_clearance)  # 올라갈 단 + swing_clearance 위로는 보상 없음
         bx = env.scene[asset_cfg.name].data.root_pos_w.torch[:, 0] - env.scene.env_origins[:, 0]
+        # 몸통 전진 보상의 상한. 중간발이 올라가기 전에 몸통이 너무 앞서면 중간다리가 단 모서리에 끼므로 상한을 낮춘다
+        # (몸통이 수직면 + 0.05에 있으면 중간발의 기본 위치가 이미 단 위라서, 들었다 내리기만 해도 딛을 수 있다)
+        before_middle = (phase == PHASE_MOVE_FRONT) | (phase == PHASE_MOVE_MIDDLE)
+        body_limit = riser + torch.where(before_middle, fwd_ahead_before_middle, fwd_ahead)
+        capped_bx = torch.minimum(bx, body_limit)
+        mx = torch.minimum(tips[:, MIDDLE, 0].min(dim=1).values, riser + 0.05)  # 두 중간발 중 뒤처진 발 (단 위 5cm까지)
         rx = torch.minimum(tips[:, REAR, 0].min(dim=1).values, riser + 0.05)  # 두 뒷발 중 뒤처진 발 (단 위 5cm까지)
-        # 올라갈 단 이상을 딛고 있음: 발 아래 지형 ≥ 그 단 높이, 지형 위 contact_tol 이내
-        contact = tips[..., 2] - terrain < contact_tol
+        # 옮기는 발이 지금 단에서 올라갈 단까지 얼마나 올라왔는지 (0~1). 단 높이에서 잘라서 단에 내려놓아도 점수가 줄지 않는다
+        lift_score = ((tips[..., 2] - (top - stairs.step_height)) / stairs.step_height).clamp(0.0, 1.0)
+        # 올라갈 단 이상을 딛고 있음: 발 아래 지형 ≥ 그 단 높이, 지형과의 높이 차 contact_tol 이내 (발이 단보다 낮으면 안 침)
+        contact = (tips[..., 2] - terrain).abs() < contact_tol
         on = (terrain >= top - 1e-3) & contact
 
         # ----- 2. 최고기록 갱신량 -----
         self.best_x = torch.where(self.need_init, x, self.best_x)
-        self.best_bx = torch.where(self.need_init, bx, self.best_bx)
+        self.best_bx = torch.where(self.need_init, capped_bx, self.best_bx)
+        self.best_mx = torch.where(self.need_init, mx, self.best_mx)
         self.best_rx = torch.where(self.need_init, rx, self.best_rx)
         self.best_z = torch.where(self.need_init.unsqueeze(1), z, self.best_z)
         self.need_init[:] = False
         gx = (x - self.best_x).clamp(min=0)
-        gbx = (bx - self.best_bx).clamp(min=0)
+        gbx = (capped_bx - self.best_bx).clamp(min=0)
+        gmx = (mx - self.best_mx).clamp(min=0)
         grx = (rx - self.best_rx).clamp(min=0)
         gz = (z - self.best_z).clamp(min=0)
         self.best_x = torch.maximum(self.best_x, x)
-        self.best_bx = torch.maximum(self.best_bx, bx)
+        self.best_bx = torch.maximum(self.best_bx, capped_bx)
+        self.best_mx = torch.maximum(self.best_mx, mx)
         self.best_rx = torch.maximum(self.best_rx, rx)
         self.best_z = torch.maximum(self.best_z, z)
 
         # ----- 3. phase별 진행 보상 + 완료 판정 -----
         gain = torch.zeros(env.num_envs, device=env.device)
+        lift_reward = torch.zeros(env.num_envs, device=env.device)
         done = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
 
         now = phase == PHASE_APPROACH
@@ -280,11 +293,16 @@ class stair_phase_reward(ManagerTermBase):
         for k, feet in MOVE_PHASES.items():
             now = phase == k
             gain += gz[:, feet].sum(1) * now
-            # 뒷발은 몸을 밀지 않고 다리를 접어 단 안쪽으로
-            gain += (grx + rear_body_fwd * gbx if k == PHASE_MOVE_REAR else gbx) * now
+            lift_reward += lift_score[:, feet].mean(1) * now
             done |= now & on[:, feet].all(1)
+        gain += gbx * (phase == PHASE_MOVE_FRONT)
+        gain += (gmx + gbx) * (phase == PHASE_MOVE_MIDDLE)
+        # 뒷발은 몸을 밀지 않고 다리를 접어 단 안쪽으로
+        gain += (grx + rear_body_fwd * gbx) * (phase == PHASE_MOVE_REAR)
 
         is_settle = phase == PHASE_SETTLE
+        # SETTLE에 들어가도 손해가 없도록 lift_hold 최댓값을 그대로 준다. 줄어들면 일부러 뒷발을 든 채로 머무른다
+        lift_reward += is_settle
         settle_score, steady = self._settle_state(env, asset_cfg, settle, on)
         settle_score = settle_score * is_settle
         # 멈춘 상태가 끊기면 시간을 처음부터 다시 잰다
@@ -295,6 +313,7 @@ class stair_phase_reward(ManagerTermBase):
         # 새 phase는 지금부터 다시 기록
         self.best_z[done] = z[done]
         self.best_bx[done] = bx[done]
+        self.best_mx[done] = mx[done]
         self.best_rx[done] = rx[done]
         next_target = (levels.min(1).values + 1).clamp(max=stairs.num_steps)  # SETTLE의 target = 꼭대기 단
         self.target = torch.where(done, next_target, self.target)
@@ -315,7 +334,7 @@ class stair_phase_reward(ManagerTermBase):
         stable = margin.clamp(0.0, 1.0) * (phase == PHASE_MOVE_REAR)
         # SETTLE에 들어가도 손해가 없도록 support 최댓값을 그대로 준다. 줄어들면 일부러 뒷발 phase에 머무른다
         stable = stable + (phase == PHASE_SETTLE)
-        # 몸통 전진: 앞에 있을수록 매 step (hold와 같은 크기로 경쟁), 올라갈 단 수직면 + fwd_ahead에서 포화 → 앞발이 다음 수직면에 안 닿게
-        fwd = torch.minimum(bx, riser + fwd_ahead).clamp(min=0.0)
+        # 몸통 전진: 앞에 있을수록 매 step (hold와 같은 크기로 경쟁), body_limit에서 포화 → 앞발이 다음 수직면에 안 닿게
+        fwd = capped_bx.clamp(min=0.0)
         return ((gain + bonus * done) / env.step_dt + hold * held + support * stable + body_fwd * fwd
-                + settle.reward * settle_score)
+                + lift_hold * lift_reward + settle.reward * settle_score)

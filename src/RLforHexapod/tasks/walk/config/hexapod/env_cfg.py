@@ -234,9 +234,10 @@ class StairsRewardsCfg:
     joint_torques_l2 = RewTerm(func=mdp.joint_torques_l2, weight=-1e-7)
     joint_vel_l2 = RewTerm(func=mdp.joint_vel_l2, weight=-1e-3)
     joint_acc_l2 = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    # 중간다리: 항상 켬 (들었으면 내려놓게), 뒷다리: 뒷발을 옮기는 phase에서만 끔
+    # 중간다리, 뒷다리: 들었으면 내려놓게. 그 쌍을 옮기는 phase에서만 끔
     feet_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
-        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"])})
+        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_2", "tibia_5"]),
+        "skip_phases": (mdp.PHASE_MOVE_MIDDLE,)})
     rear_long_air_time = RewTerm(func=mdp.feet_long_air_time, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["tibia_3", "tibia_4"]),
         "skip_phases": (mdp.PHASE_MOVE_REAR,)})
@@ -246,7 +247,7 @@ class StairsRewardsCfg:
         "asset_cfg": SceneEntityCfg("robot", body_names=["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"],
                                     preserve_order=True),
         "stairs": STAIRS, "bonus": 40.0, "hold": 0.7, "support": 2.0, "body_fwd": 3.0, "swing_clearance": 0.3,
-        "settle": mdp.SettleCfg()})
+        "fwd_ahead_before_middle": 0.05, "lift_hold": 1.0, "settle": mdp.SettleCfg()})
 
 
 @configclass
