@@ -219,6 +219,8 @@ class StairsEventsCfg(EventsCfg):
 class StairsRewardsCfg:
     # 단계를 마칠 때마다 1번 (weight = 점수)
     phase_bonus = RewTerm(func=mdp.stair_phase_bonus, weight=10.0)
+    # 뒷발 옮기기 중 앞다리를 수직면과 평행하게 돌린 비율의 신기록 (weight = 다리 하나를 끝까지 돌린 점수)
+    front_fold = RewTerm(func=mdp.stair_front_fold, weight=5.0)
     # 옮기는 발이 단 위에 처음 놓일 때, 발마다 단계당 1번 (weight = 발 하나의 점수)
     foot_placed = RewTerm(func=mdp.stair_foot_placed, weight=5.0)
     # 옮기는 발이 단 끝에라도 처음 닿을 때, 발마다 단계당 1번 (weight = 발 하나의 점수)

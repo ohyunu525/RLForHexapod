@@ -12,6 +12,7 @@
         전진:   몸통 x
         옮기기: 옮기는 발끝 높이 (tibia가 45° 이내이고 안쪽으로 접히지 않았을 때만)
                 몸통 x (옮기는 두 발이 단 높이 위에 있을 때만)
+        뒷발 옮기기: 앞다리를 수직면과 평행하게 돌린 정도
     단계 완료 보너스
     발마다 단계당 1번: 단 끝에 처음 닿을 때, 단 위에 처음 놓을 때
     tibia 수직도: 항상, 여섯 다리 평균
@@ -34,6 +35,7 @@ from .observations import stairs_terrain_height, tip_offsets
 # 발 순서: tibia(L1), tibia_2 ~ tibia_6
 FOOT_BODIES = ["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"]
 FRONT, MIDDLE, REAR = [0, 5], [1, 4], [2, 3]
+FRONT_COXA_JOINTS = ["L1_coxa", "L6_coxa"]  # FRONT와 같은 순서
 
 # ===== 단계 =====
 ADVANCE, MOVE = 0, 1  # 전진, 옮기기
@@ -73,6 +75,9 @@ class StairGaitCfg:
     over_margin: float = 0.02    # 옮기기 완료: 발이 수직면을 이만큼 넘어 단 위에 닿음
     edge_reach: float = 0.015    # 단 끝 닿기: 발끝 추정점이 수직면보다 이만큼 앞이어도 인정 (실제 발 앞 끝은 추정점보다 1.1~1.6cm 앞)
 
+    # 뒷발 옮기기: 앞다리를 수직면과 평행하게 돌리면 앞발이 몸통 기준 +15cm에서 +9cm로 들어와 뒷발 자리가 생긴다
+    front_parallel_coxa: float = 0.96  # 앞다리가 수직면과 평행해지는 coxa 각도 크기 [rad] (55°, L1은 +, L6은 -)
+
     # 접지
     tip_height: float = 0.013    # 딛었을 때 발끝 추정점이 지면보다 높은 만큼 (메시 최저점과의 차이)
     contact_tol: float = 0.03    # 발끝과 지면의 높이 차 허용치
@@ -98,6 +103,7 @@ class StairTracker:
         self.sensor = env.scene.sensors["contact_forces"]
         self.foot_ids, _ = self.asset.find_bodies(FOOT_BODIES, preserve_order=True)
         self.sensor_ids, _ = self.sensor.find_bodies(FOOT_BODIES, preserve_order=True)
+        self.front_coxa_ids, _ = self.asset.find_joints(FRONT_COXA_JOINTS, preserve_order=True)
         self.tip_offset = tip_offsets(FOOT_BODIES, env.device)
 
         # 단계 번호: 0 ~ final_advance - 1 = 계단, final_advance = 마지막 전진, settle_move = 정지, done_move = 성공
@@ -109,6 +115,7 @@ class StairTracker:
         device, n, num_feet = env.device, env.num_envs, len(FOOT_BODIES)
         self.table_kind = torch.tensor([p.kind for p in PHASES], device=device)
         self.table_body_x = torch.tensor([p.body_x for p in PHASES], device=device)
+        self.table_rear_move = torch.tensor([p.feet == REAR for p in PHASES], device=device)
         self.table_moving = torch.zeros(NUM_PHASES, num_feet, dtype=torch.bool, device=device)
         self.table_placed = torch.zeros(NUM_PHASES, num_feet, device=device)  # 이번 단에서 이미 올려놓은 발 (1 = 올려놓음)
         placed = []
@@ -124,6 +131,8 @@ class StairTracker:
         self.need_init = torch.ones(n, dtype=torch.bool, device=device)  # 새 단계 시작 → 신기록을 지금 값으로
         self.best_body_x = torch.zeros(n, device=device)
         self.best_z = torch.zeros(n, num_feet, device=device)
+        self.best_fold = torch.zeros(n, len(FRONT_COXA_JOINTS), device=device)
+        self.front_parallel = torch.tensor([self.gait.front_parallel_coxa, -self.gait.front_parallel_coxa], device=device)
         self.foot_touched = torch.zeros(n, num_feet, dtype=torch.bool, device=device)  # 이번 단계에 단 끝에 닿은 발
         self.foot_placed = torch.zeros(n, num_feet, dtype=torch.bool, device=device)  # 이번 단계에 단 위에 놓인 발
         self.steady_time = torch.zeros(n, device=device)  # 멈춘 상태를 유지한 시간 [s]
@@ -133,6 +142,7 @@ class StairTracker:
         # 이번 step의 결과 (보상 함수들이 읽는다)
         self.just_done = torch.zeros(n, dtype=torch.bool, device=device)
         self.progress = torch.zeros(n, device=device)
+        self.fold_gain = torch.zeros(n, device=device)
         self.new_touches = torch.zeros(n, device=device)
         self.new_placed = torch.zeros(n, device=device)
         self.vertical_score = torch.zeros(n, device=device)
@@ -206,9 +216,13 @@ class StairTracker:
         capped_body_x = torch.minimum(body_x, limit_x)
         capped_z = torch.minimum(tips[..., 2], (top + gait.tip_height + gait.raise_reward_cap).unsqueeze(1))
 
+        # 앞다리를 수직면과 평행한 각도까지 돌린 비율 (0 = 기본 자세, 1 = 평행)
+        fold = (self.asset.data.joint_pos.torch[:, self.front_coxa_ids] / self.front_parallel).clamp(max=1.0)
+
         # 새 단계의 첫 step: 신기록을 지금 값으로
         self.best_body_x = torch.where(self.need_init, capped_body_x, self.best_body_x)
         self.best_z = torch.where(self.need_init.unsqueeze(1), capped_z, self.best_z)
+        self.best_fold = torch.where(self.need_init.unsqueeze(1), fold, self.best_fold)
         self.foot_touched &= ~self.need_init.unsqueeze(1)
         self.foot_placed &= ~self.need_init.unsqueeze(1)
         self.need_init[:] = False
@@ -234,6 +248,11 @@ class StairTracker:
         self.progress = 2.0*gain_body + gain_z
         self.best_body_x = torch.where(body_counts, torch.maximum(self.best_body_x, capped_body_x), self.best_body_x)
         self.best_z = torch.where(z_counts, torch.maximum(self.best_z, capped_z), self.best_z)
+
+        # 보상: 뒷발 옮기기 중 앞다리를 평행하게 돌린 비율의 신기록 (두 다리의 합)
+        fold_counts = (moving_pair & self.table_rear_move[phase]).unsqueeze(1)
+        self.fold_gain = ((fold - self.best_fold).clamp(min=0.0) * fold_counts).sum(1)
+        self.best_fold = torch.where(fold_counts, torch.maximum(self.best_fold, fold), self.best_fold)
 
         # 단계 완료 조건
         advance_done = advancing & (self.best_body_x >= limit_x - gait.advance_tol)
@@ -293,6 +312,7 @@ class StairTracker:
         self.steady_time[env_ids] = 0.0
         self.just_done[env_ids] = False
         self.progress[env_ids] = 0.0
+        self.fold_gain[env_ids] = 0.0
         self.new_touches[env_ids] = 0.0
         self.new_placed[env_ids] = 0.0
         self.vertical_score[env_ids] = 0.0
@@ -427,6 +447,13 @@ def stair_progress(env) -> torch.Tensor:
     tracker = get_tracker(env)
     tracker.update()
     return tracker.progress / env.step_dt
+
+
+def stair_front_fold(env) -> torch.Tensor:
+    """뒷발 옮기기 중 앞다리를 수직면과 평행하게 돌린 비율의 신기록, 두 다리의 합 (weight = 다리 하나를 끝까지 돌린 점수)."""
+    tracker = get_tracker(env)
+    tracker.update()
+    return tracker.fold_gain / env.step_dt
 
 
 def stair_edge_touch(env) -> torch.Tensor:
