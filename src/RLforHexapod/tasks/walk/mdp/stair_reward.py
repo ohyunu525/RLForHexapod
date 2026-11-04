@@ -14,7 +14,7 @@
                 몸통 x (옮기는 두 발이 단 높이 위에 있을 때만)
     단계 완료 보너스
     tibia 수직도: 항상, 여섯 다리 평균
-    벌점: 옮기기 중 나머지 발이 제자리에서 떨어져 있을 때
+    벌점: 옮기기 중 나머지 발이 제자리에서 떨어져 있을 때, 항상 몸통이 후진할 때
 
 단계 번호 move는 앞으로만 증가한다. 한 step의 계산은 StairTracker.update()에 모여 있다.
 """
@@ -63,6 +63,7 @@ class StairGaitCfg:
 
     # 전진
     advance_tol: float = 0.01    # 전진 완료: 목표 x까지 남은 거리
+    backward_speed_tol: float = 0.05  # 이 속도 이하의 후진은 흔들림으로 보고 벌점 없음 [m/s]
 
     # 옮기기
     raise_reward_cap: float = 0.05  # 발끝 높이 보상의 상한: 단 위에 디뎠을 때보다 이만큼 높은 곳까지
@@ -130,6 +131,7 @@ class StairTracker:
         self.progress = torch.zeros(n, device=device)
         self.vertical_score = torch.zeros(n, device=device)
         self.standing_feet_off = torch.zeros(n, device=device)
+        self.backward_speed = torch.zeros(n, device=device)
         self.settle_score = torch.zeros(n, device=device)
 
     # ----- 지금 단계 -----
@@ -238,6 +240,10 @@ class StairTracker:
         # 벌점: 옮기는 동안 제자리에서 떨어진 나머지 발의 수 (전진 중에는 걸어야 하므로 없음)
         self.standing_feet_off = (~feet_kept).sum(1).float() * moving_pair
 
+        # 벌점: 몸통의 후진 속도 (전진 보상은 신기록만 주므로 후진 비용이 따로 없다)
+        backward = (-self.asset.data.root_vel_w.torch[:, 0]).clamp(min=0.0)
+        self.backward_speed = backward * (backward > gait.backward_speed_tol)
+
         # 정지: 여섯 발이 꼭대기에 있고 몸통이 멈춤
         speed = self.asset.data.root_vel_w.torch.norm(dim=1)
         all_kept = feet_kept.all(1)
@@ -266,6 +272,7 @@ class StairTracker:
         self.progress[env_ids] = 0.0
         self.vertical_score[env_ids] = 0.0
         self.standing_feet_off[env_ids] = 0.0
+        self.backward_speed[env_ids] = 0.0
         self.settle_score[env_ids] = 0.0
 
 
@@ -409,6 +416,13 @@ def stair_standing_feet_off(env) -> torch.Tensor:
     tracker = get_tracker(env)
     tracker.update()
     return tracker.standing_feet_off
+
+
+def stair_backward(env) -> torch.Tensor:
+    """모든 단계에서 몸통의 후진 속도 [m/s] (weight = 후진 1m당 점수)."""
+    tracker = get_tracker(env)
+    tracker.update()
+    return tracker.backward_speed
 
 
 def stair_settle_still(env) -> torch.Tensor:

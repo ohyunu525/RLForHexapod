@@ -225,6 +225,8 @@ class StairsRewardsCfg:
     tibia_vertical = RewTerm(func=mdp.stair_tibia_vertical, weight=0.5)
     # 옮기기 중 제자리에서 떨어진 나머지 발의 수 (weight = 발 하나당 초당 벌점)
     standing_feet_off = RewTerm(func=mdp.stair_standing_feet_off, weight=-1.0)
+    # 모든 단계에서 몸통의 후진 속도 (weight = 후진 1m당 점수)
+    backward = RewTerm(func=mdp.stair_backward, weight=-30.0)
     # 꼭대기에서 멈출수록 (weight = 초당 최대 점수)
     settle_still = RewTerm(func=mdp.stair_settle_still, weight=4.0)
     # 실패: weight × step_dt(0.02)가 실제 점수 → -10점
