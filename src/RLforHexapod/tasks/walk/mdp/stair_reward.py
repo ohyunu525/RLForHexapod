@@ -13,6 +13,7 @@
         옮기기: 옮기는 발끝 높이 (tibia가 45° 이내이고 안쪽으로 접히지 않았을 때만)
                 몸통 x (옮기는 두 발이 단 높이 위에 있을 때만)
     단계 완료 보너스
+    발마다 단계당 1번: 단 끝에 처음 닿을 때, 단 위에 처음 놓을 때
     tibia 수직도: 항상, 여섯 다리 평균
     벌점: 옮기기 중 나머지 발이 제자리에서 떨어져 있을 때, 항상 몸통이 후진할 때
 
@@ -70,6 +71,7 @@ class StairGaitCfg:
     min_vertical: float = 0.71   # 높이 보상에 필요한 tibia 수직도 (1 = 수직, 0.71 = 45°). 단 높이에서는 완전한 수직이 불가능하다
     inward_tol: float = 0.03     # 발끝이 무릎보다 몸 안쪽으로 이만큼 넘게 들어오면 높이 보상 없음
     over_margin: float = 0.02    # 옮기기 완료: 발이 수직면을 이만큼 넘어 단 위에 닿음
+    edge_reach: float = 0.015    # 단 끝 닿기: 발끝 추정점이 수직면보다 이만큼 앞이어도 인정 (실제 발 앞 끝은 추정점보다 1.1~1.6cm 앞)
 
     # 접지
     tip_height: float = 0.013    # 딛었을 때 발끝 추정점이 지면보다 높은 만큼 (메시 최저점과의 차이)
@@ -122,6 +124,8 @@ class StairTracker:
         self.need_init = torch.ones(n, dtype=torch.bool, device=device)  # 새 단계 시작 → 신기록을 지금 값으로
         self.best_body_x = torch.zeros(n, device=device)
         self.best_z = torch.zeros(n, num_feet, device=device)
+        self.foot_touched = torch.zeros(n, num_feet, dtype=torch.bool, device=device)  # 이번 단계에 단 끝에 닿은 발
+        self.foot_placed = torch.zeros(n, num_feet, dtype=torch.bool, device=device)  # 이번 단계에 단 위에 놓인 발
         self.steady_time = torch.zeros(n, device=device)  # 멈춘 상태를 유지한 시간 [s]
         self.ended_move = torch.zeros(n, dtype=torch.long, device=device)  # 끝난 에피소드의 단계 번호 (로그용)
         self._updated_at = -1
@@ -129,6 +133,8 @@ class StairTracker:
         # 이번 step의 결과 (보상 함수들이 읽는다)
         self.just_done = torch.zeros(n, dtype=torch.bool, device=device)
         self.progress = torch.zeros(n, device=device)
+        self.new_touches = torch.zeros(n, device=device)
+        self.new_placed = torch.zeros(n, device=device)
         self.vertical_score = torch.zeros(n, device=device)
         self.standing_feet_off = torch.zeros(n, device=device)
         self.backward_speed = torch.zeros(n, device=device)
@@ -203,6 +209,8 @@ class StairTracker:
         # 새 단계의 첫 step: 신기록을 지금 값으로
         self.best_body_x = torch.where(self.need_init, capped_body_x, self.best_body_x)
         self.best_z = torch.where(self.need_init.unsqueeze(1), capped_z, self.best_z)
+        self.foot_touched &= ~self.need_init.unsqueeze(1)
+        self.foot_placed &= ~self.need_init.unsqueeze(1)
         self.need_init[:] = False
 
         # tibia 수직도: 모든 단계에서 여섯 다리의 평균
@@ -232,6 +240,21 @@ class StairTracker:
         over_riser = tips[..., 0] >= (riser + gait.over_margin).unsqueeze(1)
         on_target = over_riser & (terrain >= top.unsqueeze(1) - 1e-3) & near_ground & (air_time == 0)
         move_done = moving_pair & (on_target | ~moving).all(1)
+
+        # 발마다 단계당 1번: 단 끝에 처음 닿을 때, 단 위에 처음 놓을 때
+        tip_z = tips[..., 2]
+        at_edge = (
+            (tips[..., 0] >= (riser - gait.edge_reach).unsqueeze(1))
+            & (tip_z >= top.unsqueeze(1))
+            & (tip_z < (top + gait.tip_height + gait.contact_tol).unsqueeze(1))
+            & (air_time == 0)
+        )
+        first_touch = at_edge & moving & ~self.foot_touched
+        first_placed = on_target & moving & ~self.foot_placed
+        self.new_touches = first_touch.sum(1).float()
+        self.new_placed = first_placed.sum(1).float()
+        self.foot_touched |= first_touch
+        self.foot_placed |= first_placed
 
         # 옮기지 않는 발은 지금까지 올린 단에 있어야 단계를 끝낼 수 있다
         placed_height = (level.unsqueeze(1) + self.table_placed[phase]) * self.stairs.step_height
@@ -270,6 +293,8 @@ class StairTracker:
         self.steady_time[env_ids] = 0.0
         self.just_done[env_ids] = False
         self.progress[env_ids] = 0.0
+        self.new_touches[env_ids] = 0.0
+        self.new_placed[env_ids] = 0.0
         self.vertical_score[env_ids] = 0.0
         self.standing_feet_off[env_ids] = 0.0
         self.backward_speed[env_ids] = 0.0
@@ -402,6 +427,20 @@ def stair_progress(env) -> torch.Tensor:
     tracker = get_tracker(env)
     tracker.update()
     return tracker.progress / env.step_dt
+
+
+def stair_edge_touch(env) -> torch.Tensor:
+    """옮기는 발이 단 끝에 처음 닿은 수. 발마다 단계당 1번 (weight = 발 하나의 점수)."""
+    tracker = get_tracker(env)
+    tracker.update()
+    return tracker.new_touches / env.step_dt
+
+
+def stair_foot_placed(env) -> torch.Tensor:
+    """옮기는 발이 단 위에 처음 놓인 수. 발마다 단계당 1번 (weight = 발 하나의 점수)."""
+    tracker = get_tracker(env)
+    tracker.update()
+    return tracker.new_placed / env.step_dt
 
 
 def stair_tibia_vertical(env) -> torch.Tensor:

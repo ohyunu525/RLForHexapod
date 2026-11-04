@@ -219,6 +219,10 @@ class StairsEventsCfg(EventsCfg):
 class StairsRewardsCfg:
     # 단계를 마칠 때마다 1번 (weight = 점수)
     phase_bonus = RewTerm(func=mdp.stair_phase_bonus, weight=10.0)
+    # 옮기는 발이 단 위에 처음 놓일 때, 발마다 단계당 1번 (weight = 발 하나의 점수)
+    foot_placed = RewTerm(func=mdp.stair_foot_placed, weight=5.0)
+    # 옮기는 발이 단 끝에라도 처음 닿을 때, 발마다 단계당 1번 (weight = 발 하나의 점수)
+    edge_touch = RewTerm(func=mdp.stair_edge_touch, weight=2.0)
     # 지금 단계의 신기록 갱신량. 전진: 몸통 x, 옮기기: 발끝 높이 + 몸통 x (weight = 1m당 점수)
     progress = RewTerm(func=mdp.stair_progress, weight=30.0)
     # 모든 단계에서 여섯 다리의 tibia가 지면에 수직일수록 (weight = 초당 최대 점수)
