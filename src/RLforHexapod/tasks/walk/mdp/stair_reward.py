@@ -223,7 +223,7 @@ class StairTracker:
         # 보상: 신기록 갱신량 (단위 m)
         gain_body = (capped_body_x - self.best_body_x).clamp(min=0.0) * body_counts
         gain_z = ((capped_z - self.best_z).clamp(min=0.0) * z_counts).sum(1)
-        self.progress = gain_body + gain_z
+        self.progress = 2.0*gain_body + gain_z
         self.best_body_x = torch.where(body_counts, torch.maximum(self.best_body_x, capped_body_x), self.best_body_x)
         self.best_z = torch.where(z_counts, torch.maximum(self.best_z, capped_z), self.best_z)
 

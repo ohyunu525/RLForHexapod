@@ -234,6 +234,9 @@ class StairsRewardsCfg:
         "term_keys": ["base_low", "bad_ori", "off_stairs", "sim_blowup", "sim_nan"]})  # 성공 제외
 
     # 동작 규제
+    flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-5.0)
+
+    # 동작 규제
     undesired_contacts = RewTerm(func=mdp.undesired_contacts, weight=-1.0, params={
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["body", "femur.*", "coxa.*"]),
         "threshold": 1.0})
