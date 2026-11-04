@@ -21,3 +21,13 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_ppo_cfg:HexapodStatePPORunnerCfg"
     },
 )
+
+gym.register(
+    id="Hexapod-Stair-Student-A",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point":f"{_PACKAGE}.env_cfg:HexapodStairStudentAEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_distillation_cfg:HexapodStudentRunnerCfg"
+    },
+)

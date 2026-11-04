@@ -5,4 +5,5 @@
 
 # 구체적인 해야 할 일
 - phase init state 버퍼 초기 자세 생성(+검증)
+- student 관측 시험: [student_observation_test.md](student_observation_test.md)
 
