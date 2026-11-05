@@ -44,3 +44,8 @@ class HexapodStudentRunnerCfg(RslRlDistillationRunnerCfg):
         gradient_length=64,  # 1.28초. 단계가 수 초씩 이어져서 튜토리얼 값(15)보다 길게 잡음
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class HexapodStudentBRunnerCfg(HexapodStudentRunnerCfg):
+    run_name = "B"

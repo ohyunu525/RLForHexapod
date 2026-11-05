@@ -332,3 +332,19 @@ class HexapodStairStudentAEnvCfg(HexapodStairEnvCfg):
         super().__post_init__()
         # 실제 운용처럼 기억이 빈 상태에서 계단 앞부터 시작. stair_success = 처음부터 끝까지 오른 비율
         self.events.stair_reset.params["buffer_ratio"] = 0.0
+
+
+@configclass
+class StudentBObservationsCfg(StudentAObservationsCfg):
+    @configclass
+    class StudentCfg(StudentAObservationsCfg.StudentCfg):
+        # 서보 출력을 읽지 못하는 경우. 관절 정보는 last_action(명령값)뿐이다
+        joint_pos = None
+        joint_vel = None
+
+    student: StudentCfg = StudentCfg()
+
+
+@configclass
+class HexapodStairStudentBEnvCfg(HexapodStairStudentAEnvCfg):
+    observations: ObservationsCfg = StudentBObservationsCfg()

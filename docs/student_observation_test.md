@@ -8,7 +8,7 @@ CAD를 확정하기 전에, 현재 USD와 현재 계단 teacher로 student에게
 | student | 관절 입력 | 높이맵 | 상태 |
 |---|---|---|---|
 | A | 실제 관절각, 관절 속도 | 있음 | 구현됨 |
-| B | 명령 관절각만 (`last_action`) | 있음 | 예정 |
+| B | 명령 관절각만 (`last_action`) | 있음 | 구현됨 |
 | D | A와 동일 | 없음 | 예정 |
 
 세 student의 공통 입력:
@@ -32,19 +32,26 @@ CAD를 확정하기 전에, 현재 USD와 현재 계단 teacher로 student에게
 2. 처짐과 지연을 넣은 teacher를 재학습한 뒤, A와 B를 다시 비교한다. 값은 서보 실측으로 정한다.
 
 ## 판단 기준
-비교 지표는 `Metrics/stair_success`, `Metrics/stair_reached_top`, `Loss/behavior`다. 10%p 기준은 임시값이다.
+판단은 학습 로그가 아니라 `scripts/eval_stairs.py`의 꼭대기 도달 비율로 한다. teacher와 student를 같은 조건(저장 버퍼 없음, 노이즈 없는 평균 행동, 환경당 첫 에피소드만 집계)으로 잰다. 10%p 기준은 임시값이다.
+학습 중에는 `Metrics/stair_reached_top`, `Metrics/stair_move`(최대 17), `Loss/behavior`로 진행을 본다. A와 B는 같은 teacher 체크포인트, 같은 `num_envs`로 돌린다.
 
 | 결과 | 판단 |
 |---|---|
 | A가 teacher보다 크게 낮음 | 센서 문제가 아니다. 증류 설정이나 teacher를 먼저 본다 |
-| B가 A와 10%p 이내 | 관절 피드백 회로 없이 간다 |
-| B가 A보다 10%p 넘게 낮음 | 서보 포텐셔미터 신호 읽기를 검토한다 |
+| 1단계에서 B가 A보다 10%p 넘게 낮음 | 처짐이 작은 조건에서도 관절 입력이 필요하다. 서보 포텐셔미터 신호 읽기를 검토한다 |
+| 1단계에서 B가 A와 10%p 이내 | 결론을 내리지 않는다. 지금은 실제 관절각이 명령값과 거의 같으므로 2단계에서 다시 비교한다 |
+| 2단계에서 B가 A와 10%p 이내 | 관절 피드백 회로 없이 간다 |
+| 2단계에서 B가 A보다 10%p 넘게 낮음 | 서보 포텐셔미터 신호 읽기를 검토한다 |
 | D가 A와 10%p 이내 | student가 동작을 외운 것이다. 시험을 무효로 보고 계단 위치와 yaw를 무작위화한다 |
 
 ## 진행 순서
-1. A 학습 및 결과 확인
-2. B, D 추가
+1. A, B 동시 학습 및 결과 확인
+2. D 추가
 3. 비교 결과를 이 문서에 기록
 
 ## 결과
-아직 없음
+그래프에서 눈으로 읽은 값이다.
+- A: `stair_reached_top` 약 0.78 (iteration 약 2800).
+- teacher (`model_6200` 사용): `stair_reached_top` 약 0.95. `buffer_ratio=0.5`로 학습한 값이라 처음부터 시작하는 A와 바로 비교할 수 없다. 처음부터 시작하는 조건의 값은 미측정.
+- `Metrics/stair_success`: A와 teacher 모두 학습 내내 0이다. 원인 확인 전까지 이 지표로 비교할 수 없다.
+- `Metrics/success_rate`: 계단 성공률이 아니다. Isaac Lab의 속도 명령(`base_velocity`)이 기록하는 속도 추종 지표라 판단에 쓰지 않는다.
