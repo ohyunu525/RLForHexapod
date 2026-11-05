@@ -44,14 +44,30 @@ CAD를 확정하기 전에, 현재 USD와 현재 계단 teacher로 student에게
 | 2단계에서 B가 A보다 10%p 넘게 낮음 | 서보 포텐셔미터 신호 읽기를 검토한다 |
 | D가 A와 10%p 이내 | student가 동작을 외운 것이다. 시험을 무효로 보고 계단 위치와 yaw를 무작위화한다 |
 
+## 원인 분리 시험
+A가 teacher보다 크게 낮아서, A와 같은 teacher로 한 가지씩만 바꿔 학습한다. 실물에 쓸 설정이 아니다.
+
+| task | 바꾸는 것 | 오르면 뜻하는 것 |
+|---|---|---|
+| `Hexapod-Stair-Student-A-Phase` | student 입력에 단계 번호(6차원) 추가 | 단계를 추정하지 못하는 것이 원인 |
+| `Hexapod-Stair-Student-A-TopEnd` | 정지 단계에 들어서면 에피소드 종료 | 꼭대기 데이터가 학습을 방해한 것이 원인 |
+
+둘 다 그대로면 발 위치 정밀도와 학습 설정을 본다.
+
 ## 진행 순서
-1. A, B 동시 학습 및 결과 확인
-2. D 추가
-3. 비교 결과를 이 문서에 기록
+1. teacher, A 평가 (완료)
+2. A-Phase, A-TopEnd 학습 및 평가
+3. 증류 설정을 정한 뒤 A, B 재비교, D 추가
+4. 비교 결과를 이 문서에 기록
 
 ## 결과
-그래프에서 눈으로 읽은 값이다.
-- A: `stair_reached_top` 약 0.78 (iteration 약 2800).
-- teacher (`model_6200` 사용): `stair_reached_top` 약 0.95. `buffer_ratio=0.5`로 학습한 값이라 처음부터 시작하는 A와 바로 비교할 수 없다. 처음부터 시작하는 조건의 값은 미측정.
-- `Metrics/stair_success`: A와 teacher 모두 학습 내내 0이다. 원인 확인 전까지 이 지표로 비교할 수 없다.
-- `Metrics/success_rate`: 계단 성공률이 아니다. Isaac Lab의 속도 명령(`base_velocity`)이 기록하는 속도 추종 지표라 판단에 쓰지 않는다.
+`scripts/eval_stairs.py`, 4096대.
+
+| | 꼭대기 도달 | 계단 앞 시작만 | 넘어짐 (`bad_ori`) | 정지 성공 |
+|---|---|---|---|---|
+| teacher `model_6200` | 98.2% | 98.2% | 2.0% | 0% |
+| A | 75.8% | 74.8% | 18.8% | 0% |
+
+- A의 실패 993건 중 발을 옮기는 단계가 905건(91%)이다. 앞발 335, 중간발 260, 뒷발 310, 전진 87, 나머지 1건.
+- teacher도 A도 대부분 단계 16(정지)에 머물다 45초 시간 초과로 끝난다. `stair_success`가 0인 것은 기록 오류가 아니다.
+- `Metrics/success_rate`는 계단 성공률이 아니라 Isaac Lab의 속도 명령(`base_velocity`)이 기록하는 속도 추종 지표다. 판단에 쓰지 않는다.

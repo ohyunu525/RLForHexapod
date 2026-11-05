@@ -348,3 +348,31 @@ class StudentBObservationsCfg(StudentAObservationsCfg):
 @configclass
 class HexapodStairStudentBEnvCfg(HexapodStairStudentAEnvCfg):
     observations: ObservationsCfg = StudentBObservationsCfg()
+
+
+# 원인 분리 시험: A에서 한 가지만 바꾼다. 실물에 쓸 설정이 아니다.
+
+@configclass
+class StudentAPhaseObservationsCfg(StudentAObservationsCfg):
+    @configclass
+    class StudentCfg(StudentAObservationsCfg.StudentCfg):
+        # 실물에는 없는 입력. 단계를 추정하지 못하는 것이 원인인지 확인한다 (6)
+        phase = ObsTerm(func=mdp.stair_phase_obs)
+
+    student: StudentCfg = StudentCfg()
+
+
+@configclass
+class HexapodStairStudentAPhaseEnvCfg(HexapodStairStudentAEnvCfg):
+    observations: ObservationsCfg = StudentAPhaseObservationsCfg()
+
+
+@configclass
+class StudentTopEndTerminationsCfg(StairsTerminationsCfg):
+    # 꼭대기에 서 있는 동안의 데이터가 학습을 방해하는지 확인한다
+    reached_top = DoneTerm(func=mdp.stair_reached_top, time_out=True)
+
+
+@configclass
+class HexapodStairStudentATopEndEnvCfg(HexapodStairStudentAEnvCfg):
+    terminations: TerminationsCfg = StudentTopEndTerminationsCfg()

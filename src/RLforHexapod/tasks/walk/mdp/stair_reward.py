@@ -504,6 +504,12 @@ def stair_success(env) -> torch.Tensor:
     return tracker.move >= tracker.done_move
 
 
+def stair_reached_top(env) -> torch.Tensor:
+    """마지막 전진까지 끝나 정지 단계에 들어섰는지."""
+    tracker = get_tracker(env)
+    return tracker.move >= tracker.settle_move
+
+
 # ===== 관측 =====
 def stair_phase_obs(env) -> torch.Tensor:
     """지금 단계 one-hot (N, 6). 마지막 칸 = 정지."""
