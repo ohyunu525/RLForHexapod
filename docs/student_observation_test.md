@@ -32,8 +32,8 @@ CAD를 확정하기 전에, 현재 USD와 현재 계단 teacher로 student에게
 2. 처짐과 지연을 넣은 teacher를 재학습한 뒤, A와 B를 다시 비교한다. 값은 서보 실측으로 정한다.
 
 ## 판단 기준
-비교 지표는 `Metrics/stair_move`(최대 17), `Metrics/stair_success`, `Metrics/stair_reached_top`, `Loss/behavior`다. 10%p 기준은 임시값이다.
-A와 B는 같은 teacher 체크포인트, 같은 `num_envs`로 돌리고 같은 iteration에서 비교한다.
+판단은 학습 로그가 아니라 `scripts/eval_stairs.py`의 꼭대기 도달 비율로 한다. teacher와 student를 같은 조건(저장 버퍼 없음, 노이즈 없는 평균 행동, 환경당 첫 에피소드만 집계)으로 잰다. 10%p 기준은 임시값이다.
+학습 중에는 `Metrics/stair_reached_top`, `Metrics/stair_move`(최대 17), `Loss/behavior`로 진행을 본다. A와 B는 같은 teacher 체크포인트, 같은 `num_envs`로 돌린다.
 
 | 결과 | 판단 |
 |---|---|
@@ -50,4 +50,8 @@ A와 B는 같은 teacher 체크포인트, 같은 `num_envs`로 돌리고 같은 
 3. 비교 결과를 이 문서에 기록
 
 ## 결과
-- A (학습 중, iteration 미기록): `stair_move` 5.5 / 17
+그래프에서 눈으로 읽은 값이다.
+- A: `stair_reached_top` 약 0.78 (iteration 약 2800).
+- teacher (`model_6200` 사용): `stair_reached_top` 약 0.95. `buffer_ratio=0.5`로 학습한 값이라 처음부터 시작하는 A와 바로 비교할 수 없다. 처음부터 시작하는 조건의 값은 미측정.
+- `Metrics/stair_success`: A와 teacher 모두 학습 내내 0이다. 원인 확인 전까지 이 지표로 비교할 수 없다.
+- `Metrics/success_rate`: 계단 성공률이 아니다. Isaac Lab의 속도 명령(`base_velocity`)이 기록하는 속도 추종 지표라 판단에 쓰지 않는다.
