@@ -90,3 +90,38 @@ class terrain_height_under_feet(_FeetTipTerm):
 def stairs_step_height(env, stairs: StairsGeometryCfg) -> torch.Tensor:
     """3. 단 높이 (N, 1). 지금은 모든 env가 같은 계단 → 계단 높이 커리큘럼 때 env별 값으로 교체."""
     return torch.full((env.num_envs, 1), stairs.step_height, device=env.device)
+
+
+# ===== student 관측 =====
+class stairs_height_map(ManagerTermBase):
+    """가짜 라이다: 몸통 위치와 yaw를 따라가는 격자의 칸마다 지형이 몸통보다 얼마나 낮은지 (N, 칸 수)."""
+
+    def __init__(self, cfg: ObservationTermCfg, env):
+        super().__init__(cfg, env)
+        self.asset = env.scene[cfg.params["asset_cfg"].name]
+        (x_min, x_max), (y_min, y_max) = cfg.params["x_range"], cfg.params["y_range"]
+        x_spacing, y_spacing = cfg.params["spacing"]
+        # 간격이 범위를 정확히 나누지 않으면 끝을 넘지 않는 칸까지만 만든다
+        x = x_min + x_spacing * torch.arange(int((x_max - x_min) / x_spacing + 1e-6) + 1, device=env.device)
+        y = y_min + y_spacing * torch.arange(int((y_max - y_min) / y_spacing + 1e-6) + 1, device=env.device)
+        grid_x, grid_y = torch.meshgrid(x, y, indexing="ij")
+        self.grid_x, self.grid_y = grid_x.flatten(), grid_y.flatten()
+
+    def __call__(self, env, asset_cfg: SceneEntityCfg, stairs: StairsGeometryCfg, x_range, y_range, spacing):
+        pose = self.asset.data.root_pose_w.torch
+        base = pose[:, :3] - env.scene.env_origins
+        forward = torch.zeros_like(base)
+        forward[:, 0] = 1.0
+        forward = quat_apply(pose[:, 3:7], forward)
+        heading = torch.atan2(forward[:, 1], forward[:, 0]).unsqueeze(1)
+        cos, sin = torch.cos(heading), torch.sin(heading)
+        x = base[:, 0:1] + cos * self.grid_x - sin * self.grid_y
+        y = base[:, 1:2] + sin * self.grid_x + cos * self.grid_y
+        return base[:, 2:3] - stairs_terrain_height(stairs, x, y)
+
+
+def feet_contact(env, sensor_cfg: SceneEntityCfg, threshold: float = 1.0) -> torch.Tensor:
+    """발 접촉 (N, 발 수). 발끝 스위치처럼 수직 힘만 본다: 수직면에 부딪힌 tibia는 접촉이 아니다."""
+    sensor = env.scene.sensors[sensor_cfg.name]
+    forces_z = sensor.data.net_normal_forces_w_history.torch[:, :, sensor_cfg.body_ids, 2]
+    return (forces_z.max(dim=1).values > threshold).float()

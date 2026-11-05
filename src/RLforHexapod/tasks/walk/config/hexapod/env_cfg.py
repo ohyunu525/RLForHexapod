@@ -18,6 +18,7 @@ from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
+from isaaclab.utils.noise import GaussianNoiseCfg
 from isaaclab_newton.physics import MJWarpSolverCfg, NewtonCfg, NewtonCollisionPipelineCfg, NewtonManager
 from isaaclab.sensors import ContactSensorCfg
 
@@ -293,3 +294,41 @@ class HexapodStairEnvCfg(HexapodEnvCfg):
         self.episode_length_s = 45.0  # 단마다 5단계 × 3단 + 마지막 전진, 정지
 
 
+# Student-cfg  ====================================================
+# 관측 시험 계획: docs/student_observation_test.md
+
+@configclass
+class StudentAObservationsCfg(StairsObservationsCfg):
+    """teacher는 기존 policy 그룹을 그대로 보고, student는 아래 student 그룹만 본다."""
+
+    @configclass
+    class StudentCfg(ObsGroup):
+        # 실제 관절각 (엔코더가 있다고 가정)
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel)
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel)
+        # L2 내장 IMU로 측정 또는 계산
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+        projected_gravity = ObsTerm(func=mdp.projected_gravity)
+        last_action = ObsTerm(func=mdp.last_action)
+        feet_contact = ObsTerm(func=mdp.feet_contact, params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=mdp.FOOT_BODIES, preserve_order=True)})
+        # 앞쪽 x 2cm 간격, 옆쪽 y 10cm 간격, 41 x 5 = 205칸
+        height_map = ObsTerm(func=mdp.stairs_height_map, noise=GaussianNoiseCfg(std=0.01), params={
+            "asset_cfg": SceneEntityCfg("robot"), "stairs": STAIRS,
+            "x_range": (-0.24, 0.56), "y_range": (-0.2, 0.2), "spacing": (0.02, 0.1)})
+
+        def __post_init__(self):
+            self.concatenate_terms = True
+            self.enable_corruption = True  # 이 값이 있어야 noise가 적용된다
+
+    student: StudentCfg = StudentCfg()
+
+
+@configclass
+class HexapodStairStudentAEnvCfg(HexapodStairEnvCfg):
+    observations: ObservationsCfg = StudentAObservationsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        # 실제 운용처럼 기억이 빈 상태에서 계단 앞부터 시작. stair_success = 처음부터 끝까지 오른 비율
+        self.events.stair_reset.params["buffer_ratio"] = 0.0
