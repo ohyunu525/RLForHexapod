@@ -49,3 +49,13 @@ class HexapodStudentRunnerCfg(RslRlDistillationRunnerCfg):
 @configclass
 class HexapodStudentBRunnerCfg(HexapodStudentRunnerCfg):
     run_name = "B"
+
+
+@configclass
+class HexapodStudentAPhaseRunnerCfg(HexapodStudentRunnerCfg):
+    run_name = "A_phase"
+
+
+@configclass
+class HexapodStudentATopEndRunnerCfg(HexapodStudentRunnerCfg):
+    run_name = "A_top_end"
