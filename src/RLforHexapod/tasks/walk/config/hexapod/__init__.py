@@ -61,3 +61,23 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_distillation_cfg:HexapodStudentATopEndRunnerCfg"
     },
 )
+
+gym.register(
+    id="Hexapod-Stair-Student-A-Mem128",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point":f"{_PACKAGE}.env_cfg:HexapodStairStudentATopEndEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_distillation_cfg:HexapodStudentMem128RunnerCfg"
+    },
+)
+
+gym.register(
+    id="Hexapod-Stair-Student-A-Mem256",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point":f"{_PACKAGE}.env_cfg:HexapodStairStudentATopEndEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_distillation_cfg:HexapodStudentMem256RunnerCfg"
+    },
+)

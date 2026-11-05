@@ -54,6 +54,14 @@ A가 teacher보다 크게 낮아서, A와 같은 teacher로 한 가지씩만 바
 
 둘 다 그대로면 발 위치 정밀도와 학습 설정을 본다.
 
+A-Phase가 올랐으므로, 단계 번호 없이 student가 단계를 추정하도록 기억 학습 구간을 늘려 시험한다. 환경은 A-TopEnd와 같다.
+
+| task | `gradient_length` | `num_steps_per_env` | 기억 학습 구간 |
+|---|---|---|---|
+| `Hexapod-Stair-Student-A-TopEnd` (기준) | 64 | 128 | 1.28초 |
+| `Hexapod-Stair-Student-A-Mem128` | 128 | 128 | 2.56초 |
+| `Hexapod-Stair-Student-A-Mem256` | 256 | 256 | 5.12초 |
+
 ## 진행 순서
 1. teacher, A 평가 (완료)
 2. A-Phase, A-TopEnd 학습 및 평가
@@ -70,4 +78,5 @@ A가 teacher보다 크게 낮아서, A와 같은 teacher로 한 가지씩만 바
 
 - A의 실패 993건 중 발을 옮기는 단계가 905건(91%)이다. 앞발 335, 중간발 260, 뒷발 310, 전진 87, 나머지 1건.
 - teacher도 A도 대부분 단계 16(정지)에 머물다 45초 시간 초과로 끝난다. `stair_success`가 0인 것은 기록 오류가 아니다.
+- 원인 분리 시험 (사용자 보고, 평가 스크립트 값인지 미확인): A-TopEnd 약 0.8, A-Phase 0.9점대. 단계를 추정하지 못하는 것이 차이의 주된 원인으로 보이고, 꼭대기 데이터는 학습 속도에만 영향을 준 것으로 보인다.
 - `Metrics/success_rate`는 계단 성공률이 아니라 Isaac Lab의 속도 명령(`base_velocity`)이 기록하는 속도 추종 지표다. 판단에 쓰지 않는다.
