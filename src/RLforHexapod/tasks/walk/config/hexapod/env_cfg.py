@@ -89,6 +89,7 @@ class ObservationsCfg:
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
         projected_gravity = ObsTerm(func=mdp.projected_gravity)
         command = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
+        height_command = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_height"})
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -123,6 +124,8 @@ class RewardsCfg:
     track_lin_vel = RewTerm(func=mdp.track_lin_vel_xy_exp, params={"command_name": "base_velocity", "std": 0.1}, weight=1)
     # 0.5rad/s 명령에 회전하지 않으면 0.02
     track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_exp, params={"command_name": "base_velocity", "std": 0.25}, weight=0.5)
+    # 명령 범위 0.07m에 맞춘 std: 4cm 어긋나면 0.02
+    track_base_height = RewTerm(func=mdp.track_base_height_exp, params={"command_name": "base_height", "std": 0.02}, weight=0.5)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
@@ -153,6 +156,13 @@ class CommandCfg:
             ang_vel_z=(-0.5, 0.5),  # 계단 앞에서 방향 맞추기
         ),
         debug_vis=True,
+    )
+    # 몸통 원점 높이. 0.24m: femur 약 30° (다리를 거의 편 0.254m에서는 발을 들 여유가 없다), 0.17m: femur 약 80°
+    # 지금 기본 자세(femur 20°, tibia -110°)는 0.248m
+    base_height = mdp.BaseHeightCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        height_range=(0.17, 0.24),
     )
 
 
@@ -253,8 +263,9 @@ class StairsRewardsCfg:
 class StairsObservationsCfg(ObservationsCfg):
     @configclass
     class PolicyCfg(ObservationsCfg.PolicyCfg):
-        # 속도 명령을 따르지 않으므로 뺀다
+        # 속도·높이 명령을 따르지 않으므로 뺀다 (관측 91차원 유지)
         command = None
+        height_command = None
         # 계단 teacher 특권 관측
         # 1. 발끝이 지형에서 떠 있는 높이 (6) + 발끝 아래 지형의 몸통 대비 깊이 (6)
         feet_height = ObsTerm(func=mdp.feet_height_above_terrain, params={
