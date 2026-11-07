@@ -6,7 +6,8 @@
 - 실제 로딩 경로: `src/RLforHexapod/assets/robot/full/robot/robot.usda`
 - 링크 19개, 회전 관절 18개, 총 질량 2.28614kg, 몸통 질량 1.28096kg.
 - 물리 variant는 `physics`, 베이스는 자유롭게 움직인다. URDF의 충돌 형상을 사용한다.
-- 새 URDF의 앞다리 L3/L4는 몸통 +x에 있다. 초기 quaternion은 wxyz `(1, 0, 0, 0)`이다.
+- 새 URDF의 앞다리 L3/L4는 몸통 +x에 있다. Isaac Lab 3.0의 초기 quaternion은 **xyzw** `(0, 0, 0, 1)`이다.
+  `(1, 0, 0, 0)`은 x축 180° 회전으로 로봇을 뒤집으므로 사용하면 안 된다.
 - `Hexapod-Walk` 관측 67개, 행동 18개. 모터·보상·명령 범위는 현재 기준값을 유지한다.
 - 공통 로봇 설정을 쓰는 계단 task에도 같은 자산이 적용된다. 이전 로봇 체크포인트의 평가와 직접 비교하지 않는다.
 
@@ -33,8 +34,9 @@ git lfs pull
 .\scripts\train_full_robot.ps1 -DryRun
 ```
 
-`outputs/*_smoke.json`에는 실제 자산 경로, 관절 순서, 초기 방향, 높이 범위,
-리셋 전 NaN 검사, 종료 원인이 기록된다. 초기 자세가 무너지면 학습부터 강행하지 말고 이 보고서로 확인한다.
+`outputs/*_smoke.json`에는 실제 자산 경로, 관절 순서, 초기 앞쪽·위쪽 방향, 투영 중력, 기울기, 높이 범위,
+리셋 전 NaN 검사, 종료 원인이 기록된다. 첫 실패에서는 리셋 전 자세와 속도를 저장하고 즉시 중단한다.
+초기 자세가 무너지면 이 보고서로 원인을 확인한다.
 검증을 마치기 전 임의의 두 실험으로 분기하지 않는다. 서로 다른 옵션을 비교하게 되면
 동일한 URDF/USD·관측·평가 조건을 유지하고 변경 옵션만 분리한다.
 
@@ -59,6 +61,11 @@ uv pip install --python outputs/asset-converter/Scripts/python.exe -r scripts/re
 ## 현재 검증 범위
 
 자산 변환과 XML/USD 검사, 검증기의 단위 테스트, 실행 스크립트의 구문·명령 구성을 로컬에서 확인했다.
-이 PC에는 프로젝트의 Isaac Lab 3.0 CUDA 실행 환경이 없어 실제 시뮬레이션과 PPO 학습은 아직 실행하지 않았다.
-원격 실행 후 smoke 통과와 학습 로그의 갱신을 확인해야 런타임 검증이 완료된다.
+11월 8일 원격 점검에서는 첫 step부터 `bad_ori`가 발생했다. 이전 코드가 초기 회전을
+`wxyz`로 잘못 해석한 것이 확인돼 `xyzw` identity로 복구했다.
+[고정된 Isaac Lab 초기 회전 정의](https://github.com/isaac-sim/IsaacLab/blob/270a8c1d4a26181adf2c5bd2fc9a3c649f17a294/source/isaaclab/isaaclab/assets/asset_base_cfg.py#L38-L40)를 기준으로,
+공식 회전 함수를 CPU에서 실행해 이전 값의 기울기는 π, 수정 값은 0임을 확인했다.
+로컬에는 프로젝트의 CUDA 실행 환경이 없으므로 수정 후 GPU 점검과 PPO 학습은 아직 검증되지 않았다.
+원격에서 `./scripts/train_full_robot.ps1 -NumEnvs 64 -MaxIterations 2`를 실행해
+smoke 통과, 학습 로그 갱신, 체크포인트 저장을 확인한 뒤 장시간 학습한다.
 이 평지 teacher는 이후 계단 작업의 기반이지만, 계단 teacher의 관측 차원이 달라 그대로 resume할 수는 없다.

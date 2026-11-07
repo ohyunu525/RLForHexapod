@@ -26,8 +26,16 @@ def load_tracker():
     managers = stubs["isaaclab.managers"]
     managers.ManagerTermBase = managers.ObservationTermCfg = managers.SceneEntityCfg = object
     stubs["isaaclab.utils.configclass"].configclass = lambda cls: cls
-    # All fixture quaternions are the identity; rotation itself is outside this test.
-    stubs["isaaclab.utils.math"].quat_apply = lambda quat, vector: vector
+    # These transition tests support only identity rotation. Reject a mismatched
+    # quaternion convention instead of silently treating a flipped pose as identity.
+    def identity_quat_apply(quat, vector):
+        expected = torch.zeros_like(quat)
+        expected[..., 3] = 1.0  # Isaac Lab 3.0: xyzw.
+        if not torch.allclose(quat, expected):
+            raise AssertionError("Tracker fixture requires an xyzw identity quaternion")
+        return vector
+
+    stubs["isaaclab.utils.math"].quat_apply = identity_quat_apply
     with patch.dict(sys.modules, stubs):
         modules = []
         for stem in ("observations", "stair_reward"):
@@ -54,9 +62,9 @@ class Scene(dict):
 class Fixture:
     def __init__(self, *, count=1, move=1, hold=0.0):
         pose = torch.zeros(count, 7)
-        pose[:, 0], pose[:, 2], pose[:, 3] = 0.2, 0.2, 1.0
+        pose[:, 0], pose[:, 2], pose[:, 6] = 0.2, 0.2, 1.0
         quat = torch.zeros(count, 6, 4)
-        quat[..., 0] = 1.0
+        quat[..., 3] = 1.0
         self.data = tensor_data(
             root_pose_w=pose, root_vel_w=torch.zeros(count, 6),
             body_pos_w=torch.zeros(count, 6, 3), body_quat_w=quat,

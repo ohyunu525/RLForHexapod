@@ -11,6 +11,7 @@ import argparse
 import contextlib
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import sys
 import traceback
@@ -21,12 +22,42 @@ class SmokeFailure(RuntimeError):
     """A state or observation violates the smoke test's contract."""
 
 
+def orientation_tensors(data, torch, quat_apply):
+    """Read Isaac Lab 3.0 XYZW rotations; inject its rotation API for isolated tests."""
+    quat = data.root_pose_w.torch[:, 3:7]
+    gravity = data.projected_gravity_b.torch
+    forward = torch.zeros_like(gravity)
+    forward[:, 0] = 1.0
+    up = torch.zeros_like(gravity)
+    up[:, 2] = 1.0
+    return {
+        "quaternion_xyzw": quat,
+        "projected_gravity_b": gravity,
+        "body_x_world": quat_apply(quat, forward),
+        "body_z_world": quat_apply(quat, up),
+        # Same tilt definition as bad_orientation; clamp only round-off at +/-1.
+        "tilt_rad": torch.acos((-gravity[:, 2]).clamp(-1.0, 1.0)),
+    }
+
+
+def json_finite(value):
+    """Keep an invalid simulator state's diagnostic snapshot valid JSON."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, list):
+        return [json_finite(item) for item in value]
+    if isinstance(value, dict):
+        return {key: json_finite(item) for key, item in value.items()}
+    return value
+
+
 class StateProbe:
     """Inspect control-step states before the environment can automatically reset them."""
 
-    def __init__(self, report, torch):
+    def __init__(self, report, torch, quat_apply):
         self.report = report
         self.torch = torch
+        self.quat_apply = quat_apply
         self.step = 0
         self.checks = 0
         self.height_min = None
@@ -36,7 +67,66 @@ class StateProbe:
         self.report.setdefault("first_failure", {"step": self.step, "reason": message, **details})
         raise SmokeFailure(message)
 
-    def check(self, env):
+    def snapshot(self, env, env_ids, sampling="before automatic reset"):
+        """Materialize only the first failure's states, capped at eight failing environments."""
+        data = env.scene["robot"].data
+        ids = env_ids[:8]
+        values = {
+            "root_pose_w": data.root_pose_w.torch,
+            "root_vel_w": data.root_vel_w.torch,
+            **orientation_tensors(data, self.torch, self.quat_apply),
+        }
+        return json_finite({
+            "sampling": sampling,
+            "env_ids": ids.cpu().tolist(),
+            "failed_env_count": len(env_ids),
+            "quaternion_order": "xyzw",
+            **{name: value[ids].detach().cpu().tolist() for name, value in values.items()},
+        })
+
+    def initial_orientation(self, env):
+        values = orientation_tensors(env.scene["robot"].data, self.torch, self.quat_apply)
+        self.report["initial_orientation"] = {
+            "quaternion_order": "xyzw",
+            "env_ids": list(range(min(env.num_envs, 8))),
+            **{name: value[:8].detach().cpu().tolist() for name, value in values.items()},
+        }
+        self.report["initial_root_pose_env0"] = env.scene["robot"].data.root_pose_w.torch[0].cpu().tolist()
+        self.report["initial_body_x_world_first_envs"] = self.report["initial_orientation"]["body_x_world"]
+        valid = self.torch.ones(env.num_envs, dtype=self.torch.bool, device=env.device)
+        for name, axis, sign in (("body_x_world", 0, 1.0), ("body_z_world", 2, 1.0),
+                                 ("projected_gravity_b", 2, -1.0)):
+            expected = self.torch.zeros_like(values[name])
+            expected[:, axis] = sign
+            valid &= self.torch.isclose(values[name], expected, atol=1e-5, rtol=0.0).all(dim=1)
+        if not valid.all().item():
+            ids = (~valid).nonzero(as_tuple=False).flatten()
+            self.fail(
+                "Initial orientation must face world +x, keep body +z upward, and project gravity toward body -z",
+                env_ids=ids.cpu().tolist(), snapshot=self.snapshot(env, ids, "immediately after initial reset"),
+            )
+
+    def capture_termination_failure(self, env, probe_term):
+        """Called by the last termination term, while preceding term results and raw state are current."""
+        if "first_failure" in self.report:
+            return
+        manager = env.termination_manager
+        names = [name for name in manager.active_terms
+                 if name != probe_term and not manager.get_term_cfg(name).time_out]
+        failed = self.torch.zeros(env.num_envs, dtype=self.torch.bool, device=env.device)
+        for name in names:
+            failed |= manager.get_term(name)
+        if failed.any().item():
+            ids = failed.nonzero(as_tuple=False).flatten()
+            self.report["first_failure"] = {
+                "step": self.step,
+                "reason": "Neutral-pose stability termination (not a trained-policy result)",
+                "env_ids": ids.cpu().tolist(),
+                "terms": [name for name in names if manager.get_term(name).any().item()],
+                "snapshot": self.snapshot(env, ids),
+            }
+
+    def check(self, env, sampling="before automatic reset"):
         torch = self.torch
         data = env.scene["robot"].data
         states = {
@@ -44,8 +134,10 @@ class StateProbe:
             "root_vel_w": data.root_vel_w.torch,
             "joint_pos": data.joint_pos.torch,
             "joint_vel": data.joint_vel.torch,
+            "projected_gravity_b": data.projected_gravity_b.torch,
         }
-        widths = {"root_pose_w": 7, "root_vel_w": 6, "joint_pos": 18, "joint_vel": 18}
+        widths = {"root_pose_w": 7, "root_vel_w": 6, "joint_pos": 18, "joint_vel": 18,
+                  "projected_gravity_b": 3}
         for name, value in states.items():
             if tuple(value.shape) != (env.num_envs, widths[name]):
                 self.fail(f"Unexpected raw {name} shape: {tuple(value.shape)}")
@@ -55,7 +147,9 @@ class StateProbe:
                 name: (~valid).nonzero(as_tuple=False).flatten().cpu().tolist()
                 for name, valid in finite.items() if not valid.all().item()
             }
-            self.fail("Non-finite raw simulator state before reset", invalid_envs_by_field=invalid)
+            ids = (~torch.stack(list(finite.values())).all(dim=0)).nonzero(as_tuple=False).flatten()
+            self.fail("Non-finite raw simulator state", invalid_envs_by_field=invalid,
+                      snapshot=self.snapshot(env, ids, sampling))
         self.checks += 1
         height = states["root_pose_w"][:, 2] - env.scene.env_origins[:, 2]
         low, high = height.min(), height.max()
@@ -73,6 +167,10 @@ class StateProbe:
 
     def summarize(self):
         self.report["raw_state_checks"] = self.checks
+        self.report["last_attempted_step"] = self.step
+        if "step_dt_s" in self.report:
+            self.report["simulated_time_s"] = self.report.get("steps_completed", 0) * self.report["step_dt_s"]
+        self.report["timeout_reset_exercised"] = self.report.get("termination_counts", {}).get("time_out", 0) > 0
         if self.height_min is not None:
             self.report["root_height_range_m"] = [self.height_min.item(), self.height_max.item()]
 
@@ -121,12 +219,13 @@ def run(args, report):
     apply_env_overrides(args, env_cfg)
     env_cfg.seed = args.seed
     args.device = env_cfg.sim.device
-    probe = StateProbe(report, torch)
+    probe = StateProbe(report, torch, quat_apply)
 
     def inspect_before_reset(env):
         # Terminations run after physics, before rewards and automatic resets. Checking only
         # env.step()'s return would miss a NaN that was replaced by a fresh reset state.
         probe.check(env)
+        probe.capture_termination_failure(env, probe_term)
         return torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
 
     probe_term = "smoke_raw_state_finite"
@@ -155,32 +254,21 @@ def run(args, report):
             print(f"Joint order: {report['joint_names']}", flush=True)
             print(f"Body order: {report['body_names']}", flush=True)
             obs, _ = env.reset(seed=args.seed)
-            probe.check(raw_env)
+            probe.check(raw_env, sampling="immediately after initial reset")
+            probe.initial_orientation(raw_env)
+            initial = report["initial_orientation"]
+            print(f"Initial body +x in world (env 0): {initial['body_x_world'][0]}", flush=True)
+            print(f"Initial body +z in world (env 0): {initial['body_z_world'][0]}; "
+                  f"tilt={initial['tilt_rad'][0]} rad", flush=True)
             probe.observations(obs, raw_env.num_envs)
             actions = torch.zeros_like(raw_env.action_manager.action)
             if tuple(actions.shape) != (raw_env.num_envs, 18):
                 probe.fail(f"Expected actions ({raw_env.num_envs}, 18), got {tuple(actions.shape)}")
             report["policy_observation_shape"] = list(obs["policy"].shape)
             report["action_shape"] = list(actions.shape)
-            pose = robot.data.root_pose_w.torch
-            forward = torch.zeros(raw_env.num_envs, 3, device=raw_env.device)
-            forward[:, 0] = 1.0
-            forward = quat_apply(pose[:, 3:7], forward)
-            report["initial_root_pose_env0"] = pose[0].cpu().tolist()
-            report["initial_body_x_world_first_envs"] = forward[:8].cpu().tolist()
-            print(f"Initial body +x in world (env 0): {report['initial_body_x_world_first_envs'][0]}", flush=True)
-            expected_forward = torch.zeros_like(forward)
-            expected_forward[:, 0] = 1.0
-            facing_forward = torch.isclose(forward, expected_forward, atol=1e-5, rtol=0.0).all(dim=1)
-            if not facing_forward.all().item():
-                probe.fail(
-                    "Initial body +x does not face world +x; check the asset frame and root quaternion",
-                    env_ids=(~facing_forward).nonzero(as_tuple=False).flatten().cpu().tolist(),
-                )
-
             manager = raw_env.termination_manager
-            if probe_term not in manager.active_terms:
-                probe.fail("Pre-reset raw-state probe was not registered")
+            if not manager.active_terms or manager.active_terms[-1] != probe_term:
+                probe.fail("Pre-reset raw-state probe must be the last termination term")
             names = [name for name in manager.active_terms if name != probe_term]
             failure_names = [name for name in names if not manager.get_term_cfg(name).time_out]
             report["termination_counts"] = {name: 0 for name in names}
@@ -197,10 +285,7 @@ def run(args, report):
                 report["steps_completed"] = step
                 if probe.checks != checks_before + 1:
                     probe.fail("Pre-reset raw-state probe did not run exactly once for this control step")
-                # Raw states were already checked by the probe, before any automatic reset.
-                probe.observations(obs, raw_env.num_envs)
-                if not torch.isfinite(reward).all().item():
-                    probe.fail("Non-finite returned rewards")
+                # Raw state and any first failure snapshot were captured before automatic reset.
                 reasons = {name: manager.get_term(name) for name in names}
                 for name, flags in reasons.items():
                     report["termination_counts"][name] += int(flags.sum().item())
@@ -209,16 +294,12 @@ def run(args, report):
                 for name in failure_names:
                     failed |= reasons[name]
                 report["failed_episodes"] += int(failed.sum().item())
-                if failed.any().item() and "first_failure" not in report:
-                    report["first_failure"] = {
-                        "step": step,
-                        "reason": "Neutral-pose stability termination (not a trained-policy result)",
-                        "env_ids": failed.nonzero(as_tuple=False).flatten().cpu().tolist(),
-                        "terms": [name for name in failure_names if reasons[name].any().item()],
-                    }
-            report["simulated_time_s"] = args.steps * raw_env.step_dt
-            report["timeout_reset_exercised"] = report["termination_counts"].get("time_out", 0) > 0
-            report["status"] = "failed" if report["failed_episodes"] else "passed"
+                if failed.any().item():
+                    probe.fail("Neutral-pose stability failure; stopping after the first failing step")
+                probe.observations(obs, raw_env.num_envs)
+                if not torch.isfinite(reward).all().item():
+                    probe.fail("Non-finite returned rewards")
+            report["status"] = "passed"
     finally:
         probe.summarize()
 
