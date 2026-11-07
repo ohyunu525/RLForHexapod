@@ -1,13 +1,13 @@
-"""RSL-RL PPO configurations for the state teacher and the from-scratch wrist-camera policy."""
+"""RSL-RL PPO 설정: 걷기 teacher와 계단 teacher."""
 
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_rl.rsl_rl import RslRlCNNModelCfg, RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
 
 
 @configclass
 class HexapodStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    """State teacher: fully observed actor, privileged critic."""
+    """걷기 teacher: actor와 critic이 같은 관측을 본다."""
 
     seed = 42
     num_steps_per_env = 64
@@ -40,21 +40,9 @@ class HexapodStatePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         max_grad_norm=1.0,
     )
 
-@configclass
-class HexapodCameraPPORunnerCfg(HexapodStatePPORunnerCfg):
-    """Wrist-camera policy trained from scratch: wrist RGB and proprioception actor, privileged state critic."""
 
-    max_iterations = 2500
-    save_interval = 100
-    experiment_name = "hexapod_vial_camera"
-    obs_groups = {"actor": ["wrist_rgb", "proprioception"], "critic": ["critic"]}
-    actor = RslRlCNNModelCfg(
-        # Same encoder as the distillation student.
-        cnn_cfg=RslRlCNNModelCfg.CNNCfg(
-            output_channels=[16, 32, 32], kernel_size=[5, 3, 3], stride=[2, 2, 2], activation="elu"
-        ),
-        hidden_dims=[256, 128],
-        activation="elu",
-        obs_normalization=True,
-        distribution_cfg=RslRlCNNModelCfg.GaussianDistributionCfg(init_std=0.2, std_type="log", std_range=(0.05, 0.3)),
-    )
+@configclass
+class HexapodStairPPORunnerCfg(HexapodStatePPORunnerCfg):
+    """계단 teacher: 설정은 걷기와 같고 로그 폴더만 나눈다. 2026-11-07 이전 계단 로그는 hexapod_walk 폴더에 있다."""
+
+    experiment_name = "hexapod_stair"
