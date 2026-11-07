@@ -2,7 +2,16 @@ import torch
 from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.utils.math import quat_apply
 
+from .commands import base_height
 from .observations import tip_offsets
+
+
+def track_base_height_exp(env, command_name: str, std: float,
+                          asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """몸통 높이 명령 추종: exp(-오차² / std²). 1 = 명령 높이와 같음."""
+    target = env.command_manager.get_command(command_name)[:, 0]
+    error = target - base_height(env, env.scene[asset_cfg.name])
+    return torch.exp(-torch.square(error) / std**2)
 
 
 class base_height_progress(ManagerTermBase):

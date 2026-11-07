@@ -1,0 +1,151 @@
+{
+  "url": "https://cad.onshape.com/documents/f646c0fde8bd91cfa43cbae7/w/279609403375cff4404c6eae/e/76a6985095c8e8f19d67aec6",
+  "outputFormat": "urdf",
+  "joint_properties": {
+    "L1_coxa": {
+      "max_effort": 0.9218,
+      "max_velocity": 5.5116,
+      "limits": [
+        -1.5707963,
+        1.5707963
+      ]
+    },
+    "L1_femur": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        0.0,
+        3.1415927
+      ]
+    },
+    "L1_tibia": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        -4.3633231,
+        -1.2217305
+      ]
+    },
+    "L2_coxa": {
+      "max_effort": 0.9218,
+      "max_velocity": 5.5116,
+      "limits": [
+        -1.5707963,
+        1.5707963
+      ]
+    },
+    "L2_femur": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        0.0,
+        3.1415927
+      ]
+    },
+    "L2_tibia": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        -4.3633231,
+        -1.2217305
+      ]
+    },
+    "L3_coxa": {
+      "max_effort": 0.9218,
+      "max_velocity": 5.5116,
+      "limits": [
+        -1.5707963,
+        1.5707963
+      ]
+    },
+    "L3_femur": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        0.0,
+        3.1415927
+      ]
+    },
+    "L3_tibia": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        -4.3633231,
+        -1.2217305
+      ]
+    },
+    "L4_coxa": {
+      "max_effort": 0.9218,
+      "max_velocity": 5.5116,
+      "limits": [
+        -1.5707963,
+        1.5707963
+      ]
+    },
+    "L4_femur": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        0.0,
+        3.1415927
+      ]
+    },
+    "L4_tibia": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        -4.3633231,
+        -1.2217305
+      ]
+    },
+    "L5_coxa": {
+      "max_effort": 0.9218,
+      "max_velocity": 5.5116,
+      "limits": [
+        -1.5707963,
+        1.5707963
+      ]
+    },
+    "L5_femur": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        0.0,
+        3.1415927
+      ]
+    },
+    "L5_tibia": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        -4.3633231,
+        -1.2217305
+      ]
+    },
+    "L6_coxa": {
+      "max_effort": 0.9218,
+      "max_velocity": 5.5116,
+      "limits": [
+        -1.5707963,
+        1.5707963
+      ]
+    },
+    "L6_femur": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        0.0,
+        3.1415927
+      ]
+    },
+    "L6_tibia": {
+      "max_effort": 1.8633,
+      "max_velocity": 6.545,
+      "limits": [
+        -4.3633231,
+        -1.2217305
+      ]
+    }
+  },
+  "robot_name": "HexapodRobot"
+}

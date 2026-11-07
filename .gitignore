@@ -14,3 +14,7 @@ wandb/
 .vscode/launch.json
 pyrightconfig.json
 logs
+
+# onshape-to-robot export 원본 (73MB). 다시 받으려면 Onshape API 약 2,500회가 든다
+cad/onshape_export/*
+!cad/onshape_export/config.json

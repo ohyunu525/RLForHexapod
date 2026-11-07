@@ -77,14 +77,6 @@ class SceneCfg(InteractiveSceneCfg):
 
 
 @configclass
-class ActionsCfg:
-    joint_pos = mdp.JointPositionActionCfg(
-        asset_name="robot", joint_names=[".*"], use_default_offset=True,
-        scale={".*_coxa":0.5, ".*_femur": 1.0, ".*_tibia": 1.0}, 
-    )
-
-
-@configclass
 class ObservationsCfg:
     # ObservationsCfg 안에는 ObsGroup만이 들어갈 수 있다고 한다.
     # 같은 task 내에서 ObsGroup을 바꿔 껴서 쉽게 할 수 있도록 했다.
@@ -97,6 +89,7 @@ class ObservationsCfg:
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
         projected_gravity = ObsTerm(func=mdp.projected_gravity)
         command = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
+        height_command = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_height"})
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -127,8 +120,12 @@ class EventsCfg:
 @configclass
 class RewardsCfg:
     alive = RewTerm(func=mdp.is_alive, weight=0.01)
-    track_lin_vel = RewTerm(func=mdp.track_lin_vel_xy_exp, params={"command_name": "base_velocity", "std": 0.5}, weight=1)
-    track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_exp, params={"command_name": "base_velocity", "std": 0.5}, weight=0.5)
+    # 보상 = exp(-오차² / std²). std는 명령 크기에 맞춘다: 0.2m/s 명령에 서 있으면 0.02, std 0.5였을 때는 0.85
+    track_lin_vel = RewTerm(func=mdp.track_lin_vel_xy_exp, params={"command_name": "base_velocity", "std": 0.1}, weight=1)
+    # 0.5rad/s 명령에 회전하지 않으면 0.02
+    track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_exp, params={"command_name": "base_velocity", "std": 0.25}, weight=0.5)
+    # 명령 범위 0.07m에 맞춘 std: 4cm 어긋나면 0.02
+    track_base_height = RewTerm(func=mdp.track_base_height_exp, params={"command_name": "base_height", "std": 0.02}, weight=0.5)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
@@ -150,15 +147,22 @@ class CommandCfg:
     base_velocity = mdp.UniformVelocityCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        heading_command=True,
-        heading_control_stiffness=0.5,
+        # True면 모든 env에서 ang_vel_z가 heading 오차로 덮어써져 회전 명령이 무시된다 (rel_heading_envs 기본값 1.0)
+        heading_command=False,
+        rel_standing_envs=0.1,  # 10%는 정지 명령: 계단 앞이나 꼭대기에서 멈추는 동작에 필요
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(0.0, 0.2),   # 수정해야함.
-            lin_vel_y=(0.0, 0.0),
-            ang_vel_z=(-0.5, 0.5),
-            heading=(0, 0),
+            lin_vel_x=(-0.1, 0.2),  # 뒤로 조금, 앞으로 0.2m/s까지
+            lin_vel_y=(-0.1, 0.1),  # 옆걸음: 계단 앞에서 좌우 위치 맞추기
+            ang_vel_z=(-0.5, 0.5),  # 계단 앞에서 방향 맞추기
         ),
         debug_vis=True,
+    )
+    # 몸통 원점 높이. 0.24m: femur 약 30° (다리를 거의 편 0.254m에서는 발을 들 여유가 없다), 0.17m: femur 약 80°
+    # 지금 기본 자세(femur 20°, tibia -110°)는 0.248m
+    base_height = mdp.BaseHeightCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(10.0, 10.0),
+        height_range=(0.17, 0.24),
     )
 
 
@@ -259,8 +263,9 @@ class StairsRewardsCfg:
 class StairsObservationsCfg(ObservationsCfg):
     @configclass
     class PolicyCfg(ObservationsCfg.PolicyCfg):
-        # 속도 명령을 따르지 않으므로 뺀다
+        # 속도·높이 명령을 따르지 않으므로 뺀다 (관측 91차원 유지)
         command = None
+        height_command = None
         # 계단 teacher 특권 관측
         # 1. 발끝이 지형에서 떠 있는 높이 (6) + 발끝 아래 지형의 몸통 대비 깊이 (6)
         feet_height = ObsTerm(func=mdp.feet_height_above_terrain, params={
