@@ -20,7 +20,9 @@ def main():
         bundle.extractall(destination)
     launcher = destination / 'remote_eval_2850/run_eval.py'
     raise SystemExit(subprocess.call([sys.executable, str(launcher),
-                                     '--python', sys.executable, *sys.argv[1:]], cwd=repo))
+                                     '--python', sys.executable,
+                                     '--output-root', str(repo / 'evaluation_results' / 'wsp2850'),
+                                     *sys.argv[1:]], cwd=repo))
 
 
 if __name__ == '__main__':

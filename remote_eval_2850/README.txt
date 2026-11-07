@@ -1,24 +1,19 @@
-MODEL 2850 ORIGINAL / WSP EVALUATION
+WSP2850 evaluation
 
-Copy this entire remote_eval_2850 folder into:
-C:\Users\COM\Documents\RLForHexapod
+From the repository root, using the existing simulator Python:
+python scripts/run_wsp2850_eval.py
 
-Run exactly once in remote PowerShell:
-& 'C:\Users\COM\Documents\RLForHexapod\.venv\Scripts\python.exe' 'C:\Users\COM\Documents\RLForHexapod\remote_eval_2850\run_eval.py'
+Defaults: 16 environments, cuda:0, seeds 42/43/44, original and WSP.
+Total: 96 first episodes. CUDA availability must be verified on the host.
+CPU fallback is explicit: --device cpu
+A short pilot can use --seeds 42.
 
-Default: CPU, newton_gl, 128 environments, seeds 42/43/44.
-Six simulator processes run sequentially, original then WSP per seed.
-First episode per environment only, phase 0 starts at x uniform [-0.1, 0.1].
-Original height-map observation noise remains enabled. No training or exports.
-Model and pinned code hashes are verified; installed robot/stair assets must match.
-The original training variant cannot be proven from checkpoint metadata.
+Results are saved under evaluation_results/wsp2850/ab2850_*.
+Each run contains run.json, per-seed logs/results, and summary.json on success.
+This directory is not ignored by Git. Commit and push it using GitHub Desktop
+or git add evaluation_results/wsp2850 followed by commit and push.
+No automatic Git push occurs. Running logs are snapshots, not completed results.
+The outputs/ directory contains only the extracted execution bundle/cache.
 
-Results are written beneath ab2850_<UTC>_<id> inside this folder.
-run.json tracks progress; each subprocess has a .log and a result .json.
-summary.json compares top-rate, falls, settled success, and all-episode capped top time.
-Early falls and noncompletion retain the full horizon in the capped score.
-The summary refuses to compare different initial physical states.
-No candidate is automatically promoted or deployed.
-
-Optional overrides: --num-envs 256 --seeds 42 43 44 --device cuda:0
-Use a new invocation for a fresh run; existing results are preserved.
+Original checkpoints and existing result folders are preserved.
+Student-A benchmark does not prove the original checkpoint training variant.

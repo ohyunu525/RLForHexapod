@@ -2,11 +2,11 @@
   "schema_version": 1,
   "purpose": "Pinned Student-A phase0 original2850 vs WSP2850 evaluation; no automatic adoption",
   "sha256": {
-    "eval_worker.py": "4c7b386388212b0076e35ec9cbf6c351f3d998b5b04893c471c30f54bf08cfe3",
+    "eval_worker.py": "bb9d868b26635a9a6d07370201a4a721c4f1092df40ac9e25d8e73243661a324",
     "hexapod_student_compat/__init__.py": "a6b5157bf86ca6f04e1031ca20f94baffe11b334ff6692ebde16c3fcae12966d",
     "hexapod_student_compat/agents/__init__.py": "9ab0fcdcb6348cb43211bc6f760a8b4f0d55d19635bcb0b3eb925fe4faec3bd5",
     "hexapod_student_compat/agents/rsl_rl_distillation_cfg.py": "614b29dedc736d6062a63aa5df55af281ee35dbcf1dc791d1d9332237328f076",
-    "hexapod_student_compat/asset_manifest.json": "d665711ed34d0ff3b1516d869864eaef3b5bfd8304a5604b2aca30a246447099",
+    "hexapod_student_compat/asset_manifest.json": "b7e56aab0030b6cb8bc501e82fdde7491313cd8732bf08202ba8dbb5e2fa8ee1",
     "hexapod_student_compat/asset_provenance.py": "759f8b661a1da0e024537b0e066a60acec7685249572c3d42a8e737a34844316",
     "hexapod_student_compat/env_cfg.py": "5f2adc443a124946d820584df58b7d2cb345a0e380760ace1a81c7b9f2191155",
     "hexapod_student_compat/hexapod_env.py": "9ee0b54fa1cb15bca4a9a8715db83ad336f53e67ce1c5c6e95a1991780250376",
@@ -17,14 +17,14 @@
     "hexapod_student_compat/mdp/rewards.py": "c2eb5c00ebac9d9ed2889677c74e2ced72ce9bb29958fabe0235c178c2cb2784",
     "hexapod_student_compat/mdp/stair_reward.py": "69a40d1e4abb34cc147f0d617a6132d33515be8d083ceeaad0df52dfc6ab87e4",
     "hexapod_student_compat/mdp/terminations.py": "8f843b35bf70cfc78b4e47c9bdf968aa0d1c4ad0d81244e2c8cf1db6ab6b09dd",
-    "hexapod_student_compat/provenance.json": "e43178118c718c1303d2f04df011ecf80333785f955eb87c6520f334da238ec2",
+    "hexapod_student_compat/provenance.json": "22675f1994301a6daadaf65906610644f1b907f7aa1f56f8a63d6405b858d634",
     "hexapod_student_compat/README.md": "145dcf640743109b24268761c307c91e52d75c4d80b1c969e333cb2532425ba4",
-    "hexapod_student_compat/verification.json": "1dfc5c4912f3aca10cfc12dbabaf402ca57543f47be9749acab79a295d723d83",
+    "hexapod_student_compat/verification.json": "c101a5d288a2a7f01358bf1a512522d4e39f7e832fd862fa1326cad01f0bd51c",
     "hexapod_student_compat/verify_snapshot.py": "9b2a7abeb164a81dbf51b8b5e7e319850adf40c16a8653f63c3cf17986662059",
     "model_2850.pt": "218aa9b0bd3a708cd9a0ce8b5447f9b5b623c068c213420cda2cdecc7118e9e5",
-    "model_2850_wsp.json": "71f3d67e60142e1da623c20748e3c872447cc72e615196c6a26190fc03904b77",
+    "model_2850_wsp.json": "40731c7c0fb9b852b282c2f75eadf8ac94d623ef7e094edca54ac7a5d5664d01",
     "model_2850_wsp.pt": "d3fc4f998759c81c8d97e83deae3ae091337b77319fbeac6c8d810db38bc577e",
-    "README.txt": "6d111b6d2d83684d5b2699be3ef42bd7301c95cc516344ef6ca981d7d598efc1",
-    "run_eval.py": "16f14b2096de3773de17460c669595d1e4ed0176aafbc78ac5d7fa130c38091f"
+    "README.txt": "0190ad7b61ec49ecfd3ff7edf05e500216b72eb33978e258ce27dd31b41cc350",
+    "run_eval.py": "4e2095e34a1fe8d484d7f1b2ace08ad6988be4375ee62ebf33fd0088ebf8984f"
   }
 }

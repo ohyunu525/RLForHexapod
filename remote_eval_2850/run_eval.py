@@ -65,9 +65,10 @@ def aggregate(results):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--num-envs", type=int, default=128)
+    p.add_argument("--num-envs", type=int, default=16)
     p.add_argument("--seeds", nargs="+", type=int, default=[42, 43, 44])
-    p.add_argument("--device", default="cpu")
+    p.add_argument("--device", default="cuda:0")
+    p.add_argument("--output-root", type=Path, help="Directory for Git-trackable evaluation results")
     p.add_argument("--viz", default="newton_gl")
     p.add_argument("--python", type=Path, help="Override remote .venv Python")
     p.add_argument("--verify-only", action="store_true")
@@ -84,7 +85,9 @@ def main():
     if not python.is_file():
         raise FileNotFoundError(f"Use remote RLForHexapod .venv: {python}")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    run = bundle / f"ab2850_{stamp}_{uuid.uuid4().hex[:8]}"
+    output_root = (args.output_root or repository / "evaluation_results" / "wsp2850").resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    run = output_root / f"ab2850_{stamp}_{uuid.uuid4().hex[:8]}"
     run.mkdir()
     state = {"status": "running", "settings": {"num_envs": args.num_envs, "seeds": args.seeds, "device": args.device, "viz": args.viz},
              "bundle_manifest_sha256": manifest_sha, "runs": []}

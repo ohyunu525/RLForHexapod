@@ -31,6 +31,11 @@ def write_json(path, value):
     temp.replace(path)
 
 
+def load_for_evaluation(runner, checkpoint, device):
+    """Remap serialized CUDA tensors to the actual evaluation device."""
+    return runner.load(str(checkpoint), map_location=str(device))
+
+
 def collect(env, policy, obs, max_steps, progress=None):
     """Keep exactly the first episode of each env, including all failures."""
     base = env.unwrapped
@@ -114,7 +119,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role", choices=MODELS, required=True)
     parser.add_argument("--result", type=Path, required=True)
-    parser.add_argument("--num_envs", type=int, default=128)
+    parser.add_argument("--num_envs", type=int, default=16)
     parser.add_argument("--seed", type=int, default=42)
     add_launcher_args(parser)
     args, remaining = setup_preset_cli(parser, sys.argv[1:])
@@ -155,7 +160,7 @@ def main():
         env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
         agent_cfg.device = str(base.device)
         runner = create_rsl_rl_runner(env, agent_cfg)
-        runner.load(str(checkpoint))
+        load_for_evaluation(runner, checkpoint, base.device)
         policy = runner.get_inference_policy(device=base.device)
         progress = lambda step, done, total: print(f"[{args.role} seed {args.seed}] step {step}; first episodes {done}/{total}", flush=True)
         data = collect(env, policy, env.get_observations(), base.max_episode_length + 1, progress)
