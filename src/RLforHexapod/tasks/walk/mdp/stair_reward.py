@@ -81,6 +81,7 @@ class StairGaitCfg:
     # 접지
     tip_height: float = 0.013    # 딛었을 때 발끝 추정점이 지면보다 높은 만큼 (메시 최저점과의 차이)
     contact_tol: float = 0.03    # 발끝과 지면의 높이 차 허용치
+    move_contact_hold_time: float = 0.0  # MOVE 완료 조건의 연속 유지 시간 [s]. 0 = 즉시, 재학습 시 조정
 
     # 정지
     hold_time: float = 1.0       # 아래 속도 이하를 연속으로 지켜야 하는 시간 [s]
@@ -136,8 +137,11 @@ class StairTracker:
         self.foot_touched = torch.zeros(n, num_feet, dtype=torch.bool, device=device)  # 이번 단계에 단 끝에 닿은 발
         self.foot_placed = torch.zeros(n, num_feet, dtype=torch.bool, device=device)  # 이번 단계에 단 위에 놓인 발
         self.steady_time = torch.zeros(n, device=device)  # 멈춘 상태를 유지한 시간 [s]
+        self.move_ready_time = torch.zeros(n, device=device)  # MOVE 착지와 나머지 발 지지가 함께 유지된 시간
         self.ended_move = torch.zeros(n, dtype=torch.long, device=device)  # 끝난 에피소드의 단계 번호 (로그용)
         self._updated_at = -1
+        self.diagnostics_enabled = False  # 평가에서만 켠다. 학습 중에는 진단 복사 비용 없음
+        self.diagnostics = None  # 자동 리셋 전 마지막 update의 스냅샷; reset에서 지우지 않는다
 
         # 이번 step의 결과 (보상 함수들이 읽는다)
         self.just_done = torch.zeros(n, dtype=torch.bool, device=device)
@@ -208,6 +212,8 @@ class StairTracker:
         knees, tips = self.knees_and_tips()
         terrain = stairs_terrain_height(self.stairs, tips[..., 0], tips[..., 1])
         air_time = self.sensor.data.current_air_time.torch[:, self.sensor_ids]
+        # 기존 센서의 여섯 발 접촉 판정. 힘의 방향이나 하중 지지 여부까지 보장하지는 않는다.
+        feet_contact = air_time == 0
         near_ground = (tips[..., 2] - terrain - gait.tip_height).abs() < gait.contact_tol
         body_x = self.body_state()[0][:, 0]
 
@@ -238,7 +244,7 @@ class StairTracker:
         good_lift = (vertical >= gait.min_vertical) & (tip_radius >= knee_radius - gait.inward_tol)
         z_counts = moving & good_lift
 
-        # 옮기는 중 몸통 x는 두 발이 단 높이 위에 있을 때만 인정한다 (들기 전에 전진하면 발이 수직면에 막힌다)
+        # 보상 허용 조건이며 행동 차단이 아니다. 착지 전 전진은 발을 단 앞으로 보내는 데 필요하다.
         feet_up = ((tips[..., 2] >= top.unsqueeze(1)) | ~moving).all(1)
         body_counts = advancing | (moving_pair & feet_up)
 
@@ -246,7 +252,8 @@ class StairTracker:
         gain_body = (capped_body_x - self.best_body_x).clamp(min=0.0) * body_counts
         gain_z = ((capped_z - self.best_z).clamp(min=0.0) * z_counts).sum(1)
         self.progress = 2.0*gain_body + gain_z
-        self.best_body_x = torch.where(body_counts, torch.maximum(self.best_body_x, capped_body_x), self.best_body_x)
+        # 보상받지 못한 전진도 기록해야 나중에 발을 들었을 때 소급 보상되지 않는다.
+        self.best_body_x = torch.maximum(self.best_body_x, capped_body_x)
         self.best_z = torch.where(z_counts, torch.maximum(self.best_z, capped_z), self.best_z)
 
         # 보상: 뒷발 옮기기 중 앞다리를 평행하게 돌린 비율의 신기록 (두 다리의 합)
@@ -255,9 +262,10 @@ class StairTracker:
         self.best_fold = torch.where(fold_counts, torch.maximum(self.best_fold, fold), self.best_fold)
 
         # 단계 완료 조건
-        advance_done = advancing & (self.best_body_x >= limit_x - gait.advance_tol)
+        # 과거에 목표에 닿았어도 다시 후퇴했다면 현재 단계 완료로 인정하지 않는다.
+        advance_done = advancing & (body_x >= limit_x - gait.advance_tol)
         over_riser = tips[..., 0] >= (riser + gait.over_margin).unsqueeze(1)
-        on_target = over_riser & (terrain >= top.unsqueeze(1) - 1e-3) & near_ground & (air_time == 0)
+        on_target = over_riser & (terrain >= top.unsqueeze(1) - 1e-3) & near_ground & feet_contact
         move_done = moving_pair & (on_target | ~moving).all(1)
 
         # 발마다 단계당 1번: 단 끝에 처음 닿을 때, 단 위에 처음 놓을 때
@@ -275,9 +283,12 @@ class StairTracker:
         self.foot_touched |= first_touch
         self.foot_placed |= first_placed
 
-        # 옮기지 않는 발은 지금까지 올린 단에 있어야 단계를 끝낼 수 있다
+        # MOVE 중에는 나머지 발의 위치와 접촉을 함께 검사한다.
+        # ADVANCE는 발을 번갈아 들어야 하므로 기존 위치 조건만 유지한다.
         placed_height = (level.unsqueeze(1) + self.table_placed[phase]) * self.stairs.step_height
-        feet_kept = ((terrain >= placed_height - 1e-3) & near_ground) | moving
+        position_ok = (terrain >= placed_height - 1e-3) & near_ground
+        contact_ok = feet_contact | (~moving_pair).unsqueeze(1)
+        feet_kept = (position_ok & contact_ok) | moving
 
         # 벌점: 옮기는 동안 제자리에서 떨어진 나머지 발의 수 (전진 중에는 걸어야 하므로 없음)
         self.standing_feet_off = (~feet_kept).sum(1).float() * moving_pair
@@ -296,9 +307,36 @@ class StairTracker:
         self.settle_score = torch.exp(-(speed / gait.speed_std) ** 2) * settling * all_kept
 
         # 다음 단계로
-        self.just_done = ((advance_done | move_done) & all_kept) | settle_done
+        # 유지 시간은 MOVE에만 적용한다. 전진 중 걸음을 계속 딛는 동작에는 적용하지 않는다.
+        move_ready = move_done & all_kept
+        self.move_ready_time = torch.where(
+            move_ready, self.move_ready_time + self.env.step_dt, torch.zeros_like(self.move_ready_time)
+        )
+        held_move_done = move_ready & (self.move_ready_time + 1e-6 >= gait.move_contact_hold_time)
+        self.just_done = (advance_done & all_kept) | held_move_done | settle_done
+        if self.diagnostics_enabled:
+            # env.step()은 곧 종료 환경을 자동 리셋한다. 현재 단계와 물리 상태를 여기서 복사한다.
+            history = self.sensor.data.net_normal_forces_w_history.torch
+            peak = history.norm(dim=-1).argmax(dim=1)
+            contact_forces = history.gather(1, peak[:, None, :, None].expand(-1, 1, -1, 3)).squeeze(1)
+            self.diagnostics = {name: value.clone() for name, value in {
+                "move": self.move,
+                "feet_up": feet_up,
+                "body_counts": body_counts,
+                "move_done": move_done,
+                "all_kept": all_kept,
+                "move_ready_time": self.move_ready_time,
+                "just_done": self.just_done,
+                "body_x": body_x,
+                "body_vx": self.asset.data.root_vel_w.torch[:, 0],
+                "feet_contact": feet_contact,
+                "foot_force_z": self.sensor.data.net_normal_forces_w.torch[:, self.sensor_ids, 2],
+                "contact_forces_w": contact_forces,
+                "horizontal_contact_force": history[..., :2].norm(dim=-1).amax(dim=1),
+            }.items()}
         self.move = self.move + self.just_done.long()
         self.need_init |= self.just_done
+        self.move_ready_time = torch.where(self.just_done, torch.zeros_like(self.move_ready_time), self.move_ready_time)
 
         # 새 단계에 막 들어선 안정적인 상태 저장 → 리셋 때 시작 상태로 사용
         save = self.just_done & (self.move < self.done_move) & (speed < gait.save_speed_max)
@@ -310,6 +348,7 @@ class StairTracker:
         self.move[env_ids] = moves
         self.need_init[env_ids] = True
         self.steady_time[env_ids] = 0.0
+        self.move_ready_time[env_ids] = 0.0
         self.just_done[env_ids] = False
         self.progress[env_ids] = 0.0
         self.fold_gain[env_ids] = 0.0
