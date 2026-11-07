@@ -1,0 +1,53 @@
+{
+  "urdf_sha256_utf8_lf": "525214d482c89346f7e7028baab8bd4f554f5bde27b301b03125799f2379ea53",
+  "mesh_sha256": {
+    "meshes/battery.stl": "e96759805c572f1e2bcc8cb86c44711b49d02e94ad7309f88485c47708b007f5",
+    "meshes/batterycover.stl": "bcc2850936d6f6bb27e7a0b432dc3774ba9ebffcaa00c85b7c4ed8145837b7ce",
+    "meshes/body_lidar.stl": "072aef98a461128dd0359e23bbb9e2a1f7dd5c4892c404b1e25d4dea12125ecf",
+    "meshes/body_lidar_hull.stl": "57c64539101561f72769cfc820d6f8317f971642e07c84d530d815f289528670",
+    "meshes/body_pcb.stl": "9c1047e6269bb34ce7e4a500da4d08de1b90c028296600de994475bfe2c133d5",
+    "meshes/body_pcb_hull.stl": "92b32e5932cd59b1490f263c3f60006bcbb77fc7306b8c92c71b07f01a2b036d",
+    "meshes/body_rpi5.stl": "4541fb0a8bf554221090a10b0b1749ff5e8a65f3bbb801bc7b51071db99a5706",
+    "meshes/body_rpi5_hull.stl": "9a1a6f6907e1ef99b70bf8eb3ac9521209af5c2a0d9f5b490b8e0ac2dd432b3d",
+    "meshes/bodytop.stl": "194a892ecf9367d32085cfc7e2bff718e9d1bc8b5182a96585909ad9a29db25a",
+    "meshes/bodytop__2.stl": "0c8f3c2d90ee07cb97a0dc3cd31eb23a93c1b3ece838e6462da5e7f85bb43364",
+    "meshes/cap.stl": "35238b09cd4fdf45710c9000d317db1928d8c90d069b04760ef9f2ac5261c339",
+    "meshes/coxajoint.stl": "fbc13f3bc7862a90cc93d9aedb0d776ad0d30903e06ab2e6c26aa2cd2c1e23cc",
+    "meshes/d24v90f5.stl": "1ff41f78397410a80987d293313676c373bf13e89866e7553e3c309b0915df55",
+    "meshes/dsn6000aud.stl": "c519af9ec73c7a3970df76f4c30fbd4af0f9f600e9be2e164994ca24c623b633",
+    "meshes/femur.stl": "f69c2ad206f5498e1e140bc2862009ec10034f106486fba4c68ca3831003966d",
+    "meshes/hw674.stl": "f96e6d1e49c1e473d59b67658e78ce239898d5bc6f500d433182900493ba9eba",
+    "meshes/jointcover.stl": "f203e118ef8ca591760f5f63c00fe5295975a09a36fde8ce28f233d2eceb8144",
+    "meshes/lidarcap.stl": "73858e7e669ab41434ae84dc1318cf621625404119e65c7f190b5b4d6dd4649d",
+    "meshes/mainbody.stl": "7cb11b12dd533a16a76b10ed6c5e97e8c0c0691fe079f88cd7c1774fe9eaebe4",
+    "meshes/mg996r.stl": "4d0b8dfef480e3d0b5b19ba0e58af7ab9722f455fadd209705e453793cb50589",
+    "meshes/motorhorn.stl": "47fe76690bacbaf491a1d88484e5d149431962fa73f28679382e6e742fc90f40",
+    "meshes/rc9mg.stl": "106a761291089807f1b1fdb350d46f2991ffe8724c36af5301b2a17b5b62693e",
+    "meshes/tibia.stl": "7f11ad3a3b0191613fb7378550a1b783803502b0a077469e93806d38a49985b7",
+    "meshes/tibiatip1.stl": "a10d2bdc29fd6281e1dc86ffa60826d6df6f2c2256c4ecc4c06f43eb13b76ec1",
+    "meshes/tibiatip2.stl": "8e0854954a4fd53c2cbc09c7f9ad4fdafeec982b91e184f1acfd23a9e6e34dc5",
+    "meshes/tibiatip3.stl": "424ac949cb9d33b530b9db1b2898e139a930c1e29209c4d149bbde3068c6750f"
+  },
+  "urdf": "src/RLforHexapod/assets/urdf/robot.urdf",
+  "usd": "robot/robot.usda",
+  "converter_versions": {
+    "isaacsim-asset-isolated": "6.2.0.0",
+    "urdf-usd-converter": "0.3.2",
+    "usd-exchange": "3.0.1",
+    "newton-usd-schemas": "0.6.0"
+  },
+  "converter_options": {
+    "merge_fixed_joints": true,
+    "fix_base": false,
+    "collision_from_visuals": false,
+    "collision_type": "Convex Hull",
+    "allow_self_collision": false,
+    "joint_drive_type": "force",
+    "joint_target_type": "position",
+    "override_joint_stiffness": 100.0,
+    "override_joint_damping": 1.0,
+    "run_asset_transformer": true,
+    "run_multi_physics_conversion": true
+  },
+  "physics_variant": "physics"
+}

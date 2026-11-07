@@ -38,7 +38,8 @@ HEXAPOD_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(usd_path=str(ROBOT_USDA)),
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.3),
-        rot=(0.0, 0.0, 0.0, 1.0),
+        # The complete URDF's front (L3/L4) is body +x; face world +x at reset.
+        rot=(1.0, 0.0, 0.0, 0.0),
         joint_pos={
             ".*_coxa": 0.0,
             ".*_femur": math.radians(20.0),  # 0=아래로 수직, 90=수평 (한계 0~180)
@@ -110,7 +111,7 @@ class ActionsCfg:
 
 @configclass
 class EventsCfg:
-    # 실제 서보 회전 범위. robot.usda(LFS)의 0~270 override를 시작 시 덮어씀, coxa는 USD의 ±90 그대로
+    # 실제 서보 회전 범위. 새 URDF/USD와 같은 한계를 시작 시에도 명시한다.
     joint_limits = EventTerm(func=mdp.set_joint_pos_limits, mode="startup", params={
         "limits_deg": {".*_femur": (0.0, 180.0), ".*_tibia": (-250.0, -70.0)}})
     # 리셋 때 로봇을 init_state(초기 자세)로 되돌림

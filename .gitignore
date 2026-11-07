@@ -10,6 +10,10 @@ dist/
 outputs/
 wandb/
 
+# Local conversion diagnostics and scratch data; the asset and manifest are tracked.
+src/RLforHexapod/assets/robot/full/validation.json
+src/RLforHexapod/assets/robot/full/conversion-*/
+
 .vscode/settings.json
 .vscode/launch.json
 pyrightconfig.json
