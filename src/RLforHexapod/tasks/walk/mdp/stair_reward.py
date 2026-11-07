@@ -32,10 +32,11 @@ from isaaclab.utils.math import quat_apply
 from .observations import stairs_terrain_height, tip_offsets
 
 # ===== 다리 =====
-# 발 순서: tibia(L1), tibia_2 ~ tibia_6
-FOOT_BODIES = ["tibia", "tibia_2", "tibia_3", "tibia_4", "tibia_5", "tibia_6"]
+# 라이다 쪽이 앞(+x)이다 (scripts/postprocess_urdf.py에서 몸통을 180° 돌림)
+# 발 순서: 앞 오른쪽 L4, 가운데 오른쪽 L5, 뒤 오른쪽 L6, 뒤 왼쪽 L1, 가운데 왼쪽 L2, 앞 왼쪽 L3
+FOOT_BODIES = ["tibia_4", "tibia_5", "tibia_6", "tibia", "tibia_2", "tibia_3"]
 FRONT, MIDDLE, REAR = [0, 5], [1, 4], [2, 3]
-FRONT_COXA_JOINTS = ["L1_coxa", "L6_coxa"]  # FRONT와 같은 순서
+FRONT_COXA_JOINTS = ["L4_coxa", "L3_coxa"]  # FRONT와 같은 순서
 
 # ===== 단계 =====
 ADVANCE, MOVE = 0, 1  # 전진, 옮기기
@@ -76,7 +77,7 @@ class StairGaitCfg:
     edge_reach: float = 0.015    # 단 끝 닿기: 발끝 추정점이 수직면보다 이만큼 앞이어도 인정 (실제 발 앞 끝은 추정점보다 1.1~1.6cm 앞)
 
     # 뒷발 옮기기: 앞다리를 수직면과 평행하게 돌리면 앞발이 몸통 기준 +15cm에서 +9cm로 들어와 뒷발 자리가 생긴다
-    front_parallel_coxa: float = 0.96  # 앞다리가 수직면과 평행해지는 coxa 각도 크기 [rad] (55°, L1은 +, L6은 -)
+    front_parallel_coxa: float = 0.96  # 앞다리가 수직면과 평행해지는 coxa 각도 크기 [rad] (55°, L4는 +, L3는 -)
 
     # 접지
     tip_height: float = 0.013    # 딛었을 때 발끝 추정점이 지면보다 높은 만큼 (메시 최저점과의 차이)
