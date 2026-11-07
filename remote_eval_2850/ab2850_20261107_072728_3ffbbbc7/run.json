@@ -1,0 +1,42 @@
+{
+  "status": "failed",
+  "settings": {
+    "num_envs": 128,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "device": "cpu",
+    "viz": "newton_gl"
+  },
+  "bundle_manifest_sha256": "2338358b8b5460b50fa901b6660bc506c644ca32e9d248c9477a2d0b73aa70e9",
+  "runs": [
+    {
+      "role": "original",
+      "seed": 42,
+      "command": [
+        "C:\\Users\\COM\\Documents\\RLForHexapod\\.venv\\Scripts\\python.exe",
+        "-u",
+        "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\remote_eval_2850\\eval_worker.py",
+        "--role",
+        "original",
+        "--result",
+        "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\remote_eval_2850\\ab2850_20261107_072728_3ffbbbc7\\original_seed42.json",
+        "--num_envs",
+        "128",
+        "--seed",
+        "42",
+        "--device",
+        "cpu",
+        "--viz",
+        "newton_gl"
+      ],
+      "log": "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\remote_eval_2850\\ab2850_20261107_072728_3ffbbbc7\\original_seed42.log",
+      "result": "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\remote_eval_2850\\ab2850_20261107_072728_3ffbbbc7\\original_seed42.json",
+      "status": "failed",
+      "returncode": 1
+    }
+  ],
+  "error": "RuntimeError: Evaluation failed; inspect C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\remote_eval_2850\\ab2850_20261107_072728_3ffbbbc7\\original_seed42.log"
+}

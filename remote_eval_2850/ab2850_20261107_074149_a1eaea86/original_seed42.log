@@ -1,0 +1,249 @@
+[INFO]: Parsing configuration from: hexapod_student_compat.env_cfg:HexapodStairStudentAEnvCfg
+[INFO]: Parsing configuration from: hexapod_student_compat.agents.rsl_rl_distillation_cfg:HexapodStudentRunnerCfg
+[INFO]: Base environment:
+	Environment device    : cpu
+	Environment seed      : 42
+	Physics step-size     : 0.005
+	Rendering step-size   : 0.005
+	Environment step-size : 0.02
+The render interval (1) is smaller than the decimation (4). Multiple render calls will happen for each environment step. If this is not intended, set the render interval to be equal to the decimation.
+I: Initializing Version 2.74.0-release.7316+gl.ec99a64b
+I: Client ID: S8LIB6ML
+I: ThreadId(02) hub_client::client::Client::new Launching client mode=Shared with_cleaner=false cache_path=None cache_size=None
+I: ThreadId(03) launch self=Launcher { discovery_lock: RwLock { lock: RwLock { inner: File { handle: 0xcd8, path: "\\\\?\\C:\\Users\\COM\\AppData\\Local\\Temp\\hub-COM.lock" } } }, mode: Shared, with_cleaner: false, config_file: "C:\\Users\\COM\\AppData\\Local\\Temp\\hub-COM-15A07251.config.json" } cmd="hub.exe" "--mode=shared" "--write-config" "C:\\Users\\COM\\AppData\\Local\\Temp\\hub-COM-15A07251.config.json" "--"
+I: Not using Hub: Hub not found
+I: Successfully created S3 provider for https://omniverse-content-production.s3-us-west-2.amazonaws.com
+I: Using CloudFront http://dcb18d6mfegct.cloudfront.net/, List = No
+Serving remote assets from the local cache under 'C:\Users\COM\AppData\Local\Temp'. Each copy is checked against the server before use; delete the directory to force a full re-download.
+C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\isaaclab_newton\cloner\newton_clone_utils.py:165: FutureWarning: Newton shape color replacement is enabled; this workaround will be deprecated in a future release.
+  replace_newton_builder_shape_colors(builder, stage)
+[INFO]: Time taken for scene creation Last: 2.038893 s, Mean: 2.038893 s, Std: 0.000000 s, N: 1
+[INFO]: Scene manager:  <class InteractiveScene>
+	Number of environments: 128
+	Environment spacing   : 3.0
+	Source prim name      : /World/envs/env_0
+	Global prim paths     : []
+	Replicate physics     : True
+Finalize builder took: Last: 0.356144 s, Mean: 0.356144 s, Std: 0.000000 s, N: 1
+Contact sensor construction took: Last: 0.004116 s, Mean: 0.004116 s, Std: 0.000000 s, N: 1
+Initialize solver took: Last: 0.975553 s, Mean: 0.975553 s, Std: 0.000000 s, N: 1
+Incompatible version of OpenGL_accelerate found, need at least (4, 0, 0) found (3, 1, 10)
+[INFO]: Time taken for simulation start Last: 3.770499 s, Mean: 3.770499 s, Std: 0.000000 s, N: 1
+[INFO] Command Manager:  <CommandManager> contains 1 active terms.
++------------------------------------------------+
+|              Active Command Terms              |
++-------+---------------+------------------------+
+| Index | Name          |          Type          |
++-------+---------------+------------------------+
+|   0   | base_velocity | UniformVelocityCommand |
++-------+---------------+------------------------+
+
+[INFO] Event Manager:  <EventManager> contains 2 active terms.
++---------------------------------------+
+| Active Event Terms in Mode: 'startup' |
++------------+--------------------------+
+|   Index    | Name                     |
++------------+--------------------------+
+|     0      | joint_limits             |
++------------+--------------------------+
++-------------------------------------+
+| Active Event Terms in Mode: 'reset' |
++------------+------------------------+
+|   Index    | Name                   |
++------------+------------------------+
+|     0      | reset_all              |
+|     1      | stair_reset            |
++------------+------------------------+
+
+[INFO] Recorder Manager:  <RecorderManager> contains 0 active terms.
++-----------------------+
+| Active Recorder Terms |
++------------+----------+
+|   Index    | Name     |
++------------+----------+
++------------+----------+
+
+[INFO] Action Manager:  <ActionManager> contains 1 active terms.
++---------------------------------+
+| Active Action Terms (shape: 18) |
++-------+-----------+-------------+
+| Index | Name      |   Dimension |
++-------+-----------+-------------+
+|   0   | joint_pos |          18 |
++-------+-----------+-------------+
+
+[INFO] Observation Manager: <ObservationManager> contains 2 groups.
++------------------------------------------------------------+
+| Active Observation Terms in Group: 'policy' (shape: (91,)) |
++-----------+-----------------------------------+------------+
+|   Index   | Name                              |   Shape    |
++-----------+-----------------------------------+------------+
+|     0     | joint_pos                         |   (18,)    |
+|     1     | joint_vel                         |   (18,)    |
+|     2     | base_lin_vel                      |    (3,)    |
+|     3     | base_ang_vel                      |    (3,)    |
+|     4     | projected_gravity                 |    (3,)    |
+|     5     | last_action                       |   (18,)    |
+|     6     | feet_height                       |    (6,)    |
+|     7     | terrain_under_feet                |    (6,)    |
+|     8     | step_height                       |    (1,)    |
+|     9     | phase                             |    (6,)    |
+|     10    | feet_target                       |    (6,)    |
+|     11    | body_target                       |    (3,)    |
++-----------+-----------------------------------+------------+
++--------------------------------------------------------------+
+| Active Observation Terms in Group: 'student' (shape: (271,)) |
++-----------+----------------------------------+---------------+
+|   Index   | Name                             |     Shape     |
++-----------+----------------------------------+---------------+
+|     0     | joint_pos                        |     (18,)     |
+|     1     | joint_vel                        |     (18,)     |
+|     2     | base_ang_vel                     |      (3,)     |
+|     3     | projected_gravity                |      (3,)     |
+|     4     | last_action                      |     (18,)     |
+|     5     | feet_contact                     |      (6,)     |
+|     6     | height_map                       |     (205,)    |
++-----------+----------------------------------+---------------+
+
+[INFO] Termination Manager:  <TerminationManager> contains 7 active terms.
++-------------------------------+
+|    Active Termination Terms   |
++-------+------------+----------+
+| Index | Name       | Time Out |
++-------+------------+----------+
+|   0   | time_out   |   True   |
+|   1   | base_low   |  False   |
+|   2   | bad_ori    |  False   |
+|   3   | sim_nan    |  False   |
+|   4   | off_stairs |  False   |
+|   5   | sim_blowup |  False   |
+|   6   | success    |   True   |
++-------+------------+----------+
+
+[INFO] Reward Manager:  <RewardManager> contains 18 active terms.
++----------------------------------------+
+|          Active Reward Terms           |
++-------+---------------------+----------+
+| Index | Name                |   Weight |
++-------+---------------------+----------+
+|   0   | phase_bonus         |     10.0 |
+|   1   | front_fold          |      5.0 |
+|   2   | foot_placed         |      5.0 |
+|   3   | edge_touch          |      2.0 |
+|   4   | progress            |     30.0 |
+|   5   | tibia_vertical      |      0.5 |
+|   6   | standing_feet_off   |     -1.0 |
+|   7   | backward            |    -30.0 |
+|   8   | settle_still        |      4.0 |
+|   9   | termination_penalty |   -500.0 |
+|   10  | flat_orientation_l2 |     -5.0 |
+|   11  | undesired_contacts  |     -1.0 |
+|   12  | lin_vel_z_l2        |     -0.5 |
+|   13  | ang_vel_xy_l2       |    -0.05 |
+|   14  | action_rate_l2      |    -0.01 |
+|   15  | joint_torques_l2    |   -1e-07 |
+|   16  | joint_vel_l2        |   -0.001 |
+|   17  | joint_acc_l2        | -2.5e-07 |
++-------+---------------------+----------+
+
+[INFO] Curriculum Manager:  <CurriculumManager> contains 0 active terms.
++-------------------------+
+| Active Curriculum Terms |
++-------------+-----------+
+|    Index    | Name      |
++-------------+-----------+
++-------------+-----------+
+
+[INFO]: Completed setting up the environment...
+--------------------------------------------------------------------------------
+Resolved observation sets: 
+	 student :  ['student']
+	 teacher :  ['policy']
+--------------------------------------------------------------------------------
+Student Model: RNNModel(
+  (obs_normalizer): EmpiricalNormalization()
+  (distribution): GaussianDistribution()
+  (mlp): MLP(
+    (0): Linear(in_features=256, out_features=256, bias=True)
+    (1): ELU(alpha=1.0)
+    (2): Linear(in_features=256, out_features=128, bias=True)
+    (3): ELU(alpha=1.0)
+    (4): Linear(in_features=128, out_features=18, bias=True)
+  )
+  (rnn): RNN(
+    (rnn): GRU(271, 256)
+  )
+)
+Teacher Model: MLPModel(
+  (obs_normalizer): EmpiricalNormalization()
+  (distribution): GaussianDistribution()
+  (mlp): MLP(
+    (0): Linear(in_features=91, out_features=256, bias=True)
+    (1): ELU(alpha=1.0)
+    (2): Linear(in_features=256, out_features=256, bias=True)
+    (3): ELU(alpha=1.0)
+    (4): Linear(in_features=256, out_features=128, bias=True)
+    (5): ELU(alpha=1.0)
+    (6): Linear(in_features=128, out_features=18, bias=True)
+  )
+)
+C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\cuda\__init__.py:180: UserWarning: cudaGetDeviceCount() returned cudaErrorNotSupported, likely using older driver or on CPU machine (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\c10\cuda\CUDAFunctions.cpp:88.)
+  return torch._C._cuda_getDeviceCount() > 0
+Traceback (most recent call last):
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\isaaclab\app\sim_launcher.py", line 677, in launch_simulation
+    yield physics_cfg
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\remote_eval_2850\eval_worker.py", line 158, in main
+    runner.load(str(checkpoint))
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\rsl_rl\runners\on_policy_runner.py", line 157, in load
+    loaded_dict = torch.load(path, weights_only=False, map_location=map_location)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 1579, in load
+    return _load(
+           ^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 2190, in _load
+    result = unpickler.load()
+             ^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 2154, in persistent_load
+    typed_storage = load_tensor(
+                    ^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 2116, in load_tensor
+    wrap_storage = restore_location(storage, location)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 734, in default_restore_location
+    result = fn(storage, location)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 667, in _deserialize
+    device = _validate_device(location, backend_name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 634, in _validate_device
+    raise RuntimeError(
+RuntimeError: Attempting to deserialize object on a CUDA device but torch.cuda.is_available() is False. If you are running on a CPU-only machine, please use torch.load with map_location=torch.device('cpu') to map your storages to the CPU.
+Traceback (most recent call last):
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\remote_eval_2850\eval_worker.py", line 185, in <module>
+    main()
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\remote_eval_2850\eval_worker.py", line 158, in main
+    runner.load(str(checkpoint))
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\rsl_rl\runners\on_policy_runner.py", line 157, in load
+    loaded_dict = torch.load(path, weights_only=False, map_location=map_location)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 1579, in load
+    return _load(
+           ^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 2190, in _load
+    result = unpickler.load()
+             ^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 2154, in persistent_load
+    typed_storage = load_tensor(
+                    ^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 2116, in load_tensor
+    wrap_storage = restore_location(storage, location)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 734, in default_restore_location
+    result = fn(storage, location)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 667, in _deserialize
+    device = _validate_device(location, backend_name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\RLForHexapod\.venv\Lib\site-packages\torch\serialization.py", line 634, in _validate_device
+    raise RuntimeError(
+RuntimeError: Attempting to deserialize object on a CUDA device but torch.cuda.is_available() is False. If you are running on a CPU-only machine, please use torch.load with map_location=torch.device('cpu') to map your storages to the CPU.

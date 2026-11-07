@@ -1,0 +1,18 @@
+{
+  "source_commit": "ed53031ea774e167982bc9563a28435daefc619b",
+  "task_id": "WSP-Hexapod-Stair-Student-A",
+  "verified_upstream_files": 10,
+  "compiled_python_files": 13,
+  "relocated_import_files": [
+    "env_cfg.py"
+  ],
+  "simulation_executed": false,
+  "import_has_no_registration_side_effect": true,
+  "registration_idempotent": true,
+  "conflicting_registration_rejected": true,
+  "asset_missing_detection": true,
+  "local_asset_matches_pinned": true,
+  "local_asset_mismatches": [],
+  "local_assets_checked": 10,
+  "remote_assets_verified": false
+}
