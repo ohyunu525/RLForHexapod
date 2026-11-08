@@ -6,6 +6,35 @@ from .commands import base_height
 from .observations import tip_offsets
 
 
+def tibia_vertical_score(knees: torch.Tensor, tips: torch.Tensor) -> torch.Tensor:
+    """tibia가 지면에 수직인 정도 (..., 다리). 1 = 무릎 바로 아래 발끝, 0 = 수평 이상.
+    무릎→발끝 벡터가 아래를 향하는 cos 값이다. 걷기·계단 teacher가 같은 정의를 쓴다 (증류 때 자세 규칙을 맞추기 위해)."""
+    tibia = tips - knees
+    return (-tibia[..., 2] / tibia.norm(dim=-1).clamp(min=1e-6)).clamp(0.0, 1.0)
+
+
+class tibia_vertical(ManagerTermBase):
+    """여섯 다리 tibia 수직도의 평균 (N,). weight = 초당 최대 점수.
+
+    tibia가 수직이면 지지력이 tibia 축으로 들어가 무릎·femur 토크가 작고, 몸 높이가 femur 각도만으로 정해진다.
+    몸을 낮출 때 다리를 바깥으로 벌려 버티다 넘어지는 것을 막기 위한 항목이다.
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env):
+        super().__init__(cfg, env)
+        asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
+        self.asset = env.scene[asset_cfg.name]
+        # tibia 원점은 무릎 관절 → 발끝 = 원점 + 회전 × offset (observations.py의 TIP_OFFSET)
+        self.tip_offset = tip_offsets([self.asset.body_names[i] for i in asset_cfg.body_ids], env.device)
+
+    def __call__(self, env, asset_cfg: SceneEntityCfg):
+        data = self.asset.data
+        quat = data.body_quat_w.torch[:, asset_cfg.body_ids]
+        knees = data.body_pos_w.torch[:, asset_cfg.body_ids]
+        tips = knees + quat_apply(quat, self.tip_offset.expand(quat.shape[0], -1, -1))
+        return tibia_vertical_score(knees, tips).mean(dim=1)
+
+
 def track_base_height_exp(env, command_name: str, std: float,
                           asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """몸통 높이 명령 추종: exp(-오차² / std²). 1 = 명령 높이와 같음."""

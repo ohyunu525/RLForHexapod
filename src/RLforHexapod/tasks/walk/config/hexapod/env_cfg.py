@@ -126,6 +126,9 @@ class RewardsCfg:
     track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_exp, params={"command_name": "base_velocity", "std": 0.25}, weight=0.5)
     # 명령 범위 0.07m에 맞춘 std: 4cm 어긋나면 0.02
     track_base_height = RewTerm(func=mdp.track_base_height_exp, params={"command_name": "base_height", "std": 0.02}, weight=1.0)
+    # 여섯 다리 tibia 수직도 평균 (1 = 수직, 20° 기울면 0.94). 몸을 낮출 때 다리를 벌려 버티다 넘어지는 것을 막는다
+    # 계단 teacher의 tibia_vertical(0.5)과 같은 정의·weight: 두 teacher의 자세 규칙을 맞춰 증류를 쉽게 한다
+    tibia_vertical = RewTerm(func=mdp.tibia_vertical, params={"asset_cfg": SceneEntityCfg("robot", body_names="tibia.*")}, weight=0.5)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
