@@ -74,6 +74,24 @@ def feet_long_air_time(env, sensor_cfg: SceneEntityCfg, threshold: float = 0.5) 
     return torch.sum(torch.clamp(air - threshold, min=0.0), dim=1)
 
 
+def feet_air_time_error(env, command_name: str, sensor_cfg: SceneEntityCfg, target: float, std: float,
+                        command_threshold: float = 0.05) -> torch.Tensor:
+    """착지한 발의 공중 시간이 target에서 벗어난 정도의 합 (음수 weight로 쓴다). weight = 착지 한 번당 최대 벌점.
+
+    착지마다 1 - exp(-(공중 시간 - target)² / std²): target과 같으면 0, 멀수록 1.
+    양수 보상으로 주면 착지가 잦을수록 점수가 늘어 종종걸음이 되므로 벌점으로 준다.
+    서 있으라는 명령(병진 + 회전 속도 ≈ 0)일 때는 계산하지 않는다.
+    """
+    sensor = env.scene.sensors[sensor_cfg.name]
+    landed = sensor.compute_first_contact(env.step_dt).torch[:, sensor_cfg.body_ids].float()
+    air_time = sensor.data.last_air_time.torch[:, sensor_cfg.body_ids]
+    error = 1.0 - torch.exp(-torch.square(air_time - target) / std**2)
+    cmd = env.command_manager.get_command(command_name)
+    moving = torch.norm(cmd[:, :2], dim=1) + torch.abs(cmd[:, 2]) > command_threshold
+    # 보상 관리자가 weight × step_dt를 곱하므로, 착지 한 번당 weight가 되도록 step_dt로 나눈다
+    return torch.sum(error * landed, dim=1) * moving / env.step_dt
+
+
 class feet_clearance(ManagerTermBase):
     """스윙 중인 발끝을 target_height까지 높이 들수록 보상 (가장 낮은 발 기준 높이)."""
 

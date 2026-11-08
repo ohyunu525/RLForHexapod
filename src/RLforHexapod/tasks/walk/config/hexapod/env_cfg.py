@@ -132,6 +132,10 @@ class RewardsCfg:
         "asset_cfg": SceneEntityCfg("robot", body_names=mdp.FOOT_BODIES, preserve_order=True),
         "sensor_cfg": SceneEntityCfg("contact_forces", body_names=mdp.FOOT_BODIES, preserve_order=True),
         "std": math.radians(30.0)})
+    # 발을 든 시간이 0.3초에서 벗어나면 착지마다 벌점. 0.1초 어긋나면 0.63 × weight. 초당 10번 착지가 전부 크게 어긋나면 -0.5/s
+    feet_air_time_error = RewTerm(func=mdp.feet_air_time_error, weight=-0.05, params={
+        "command_name": "base_velocity", "target": 0.3, "std": 0.1,
+        "sensor_cfg": SceneEntityCfg("contact_forces", body_names=mdp.FOOT_BODIES, preserve_order=True)})
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
@@ -157,8 +161,9 @@ class CommandCfg:
         heading_command=False,
         rel_standing_envs=0.1,  # 10%는 정지 명령: 계단 앞이나 꼭대기에서 멈추는 동작에 필요
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.5, 0.5),  # 뒤로 조금, 앞으로 0.5m/s까지
-            lin_vel_y=(-0.5, 0.5),  # 옆걸음: 계단 앞에서 좌우 위치 맞추기
+            # 공중·지지 각 0.3초인 삼각 보행에서 0.2m/s는 보폭 6cm. 0.5m/s는 15cm라 coxa 보폭(9~12.6cm)을 넘는다
+            lin_vel_x=(-0.2, 0.2),
+            lin_vel_y=(-0.2, 0.2),  # 옆걸음: 계단 앞에서 좌우 위치 맞추기
             ang_vel_z=(-0.5, 0.5),  # 계단 앞에서 방향 맞추기
         ),
         debug_vis=True,
