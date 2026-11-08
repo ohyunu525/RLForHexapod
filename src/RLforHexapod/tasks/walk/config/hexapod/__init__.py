@@ -13,6 +13,16 @@ gym.register(
 )
 
 gym.register(
+    id="Hexapod-Walk-WSP",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{_PACKAGE}.wsp_env_cfg:HexapodWspEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_ppo_cfg:HexapodWspPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Hexapod-Stair",
     entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
     disable_env_checker=True,
