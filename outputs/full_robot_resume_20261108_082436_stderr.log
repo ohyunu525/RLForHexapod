@@ -1,0 +1,11 @@
+The render interval (1) is smaller than the decimation (4). Multiple render calls will happen for each environment step. If this is not intended, set the render interval to be equal to the decimation.
+I: Initializing Version 2.74.0-release.7316+gl.ec99a64b
+I: Client ID: XPQ6QEWJ
+I: ThreadId(02) hub_client::client::Client::new Launching client mode=Shared with_cleaner=false cache_path=None cache_size=None
+I: ThreadId(03) launch self=Launcher { discovery_lock: RwLock { lock: RwLock { inner: File { handle: 0xd20, path: "\\\\?\\C:\\Users\\COM\\AppData\\Local\\Temp\\hub-COM.lock" } } }, mode: Shared, with_cleaner: false, config_file: "C:\\Users\\COM\\AppData\\Local\\Temp\\hub-COM-2FF3CDEE.config.json" } cmd="hub.exe" "--mode=shared" "--write-config" "C:\\Users\\COM\\AppData\\Local\\Temp\\hub-COM-2FF3CDEE.config.json" "--"
+I: Not using Hub: Hub not found
+I: Successfully created S3 provider for https://omniverse-content-production.s3-us-west-2.amazonaws.com
+I: Using CloudFront http://dcb18d6mfegct.cloudfront.net/, List = No
+Serving remote assets from the local cache under 'C:\Users\COM\AppData\Local\Temp'. Each copy is checked against the server before use; delete the directory to force a full re-download.
+C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab_newton\cloner\newton_clone_utils.py:165: FutureWarning: Newton shape color replacement is enabled; this workaround will be deprecated in a future release.
+  replace_newton_builder_shape_colors(builder, stage)

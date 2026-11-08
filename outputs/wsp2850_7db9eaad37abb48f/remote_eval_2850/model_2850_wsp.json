@@ -1,0 +1,122 @@
+{
+  "status": "experimental_candidate_not_validated_in_simulation",
+  "objective": "Explore reduced recurrent retention as a possible way to reduce stair phase-transition delay",
+  "performance_claim": null,
+  "physics_validated": false,
+  "selection_basis": "Repeat the previous 1.1 update-gate experiment on the new checkpoint; not a simulation-selected optimum",
+  "previous_model_caution": "The 2650 experiment had mixed closed-loop results; its rear/head edits and physical performance do not transfer to 2850.",
+  "source": "C:\\Users\\5252x\\OneDrive\\문서\\RLForHexapod\\checkpoints\\model_2850.pt",
+  "source_sha256": "218aa9b0bd3a708cd9a0ce8b5447f9b5b623c068c213420cda2cdecc7118e9e5",
+  "output": "C:\\Users\\5252x\\OneDrive\\문서\\RLForHexapod\\checkpoints\\model_2850_wsp.pt",
+  "output_sha256": "d3fc4f998759c81c8d97e83deae3ae091337b77319fbeac6c8d810db38bc577e",
+  "torch_version": "2.2.1+cpu",
+  "generator_sha256": "868ee67d40536a856bb3d43b36bf0109bbc23db3404181e0f7cbb131c563860f",
+  "environment_reference_commit": "dcbad6dc015cbe72d0a362a417b83a0c70713ecf",
+  "environment_contract": "Student-A family: 271 observations, GRU256, ELU MLP256/128, 18 actions; exact training task unknown",
+  "environment_provenance_limit": "Architecture matches the local source; infos=None. Exact training task (A/TopEnd/Mem128/Mem256), asset and commit cannot be proven from weights.",
+  "source_reference": "https://github.com/qorhvma/RLForHexapod/blob/dcbad6dc015cbe72d0a362a417b83a0c70713ecf/src/RLforHexapod/tasks/walk/config/hexapod/agents/rsl_rl_distillation_cfg.py",
+  "patch": {
+    "group": "student_state_dict",
+    "tensor": "rnn.rnn.bias_ih_l0",
+    "slice": [
+      256,
+      512
+    ],
+    "operation": "subtract log(candidate_odds) from update-gate input bias",
+    "delta": -0.09531017980432493,
+    "candidate_odds": 1.1,
+    "changed_parameter_count": 256,
+    "interpretation": "At identical x,h, (1-z)/z is multiplied by candidate_odds; this is not a gait speed multiplier"
+  },
+  "preserved": [
+    "original file",
+    "all other student tensors",
+    "normalization",
+    "teacher",
+    "action output head",
+    "exploration std",
+    "optimizer",
+    "iteration",
+    "infos"
+  ],
+  "optimizer_note": "Retained verbatim for checkpoint compatibility; no optimizer step was taken. This is an inference experiment. Further distillation toward the unchanged teacher can undo the edit.",
+  "checks": {
+    "kind": "synthetic network checks, not simulation or locomotion evaluation",
+    "seed": 2850,
+    "fixed_state_candidate_to_retention_odds_min": 1.0999999853412155,
+    "fixed_state_candidate_to_retention_odds_max": 1.1000000181237701,
+    "update_gate_absolute_change_bound": 0.023823036596969077,
+    "update_gate_measured_max_change": 0.023823037091331045,
+    "probes": {
+      "zero_normalized_input": {
+        "predictions": 4096,
+        "raw_action_delta_rms": 0.012188722379505634,
+        "clipped_action_delta_rms": 0.010442816652357578,
+        "raw_action_delta_max": 0.060187339782714844,
+        "original_action_clip_fraction": 0.1984592080116272,
+        "candidate_action_clip_fraction": 0.2003038227558136,
+        "candidate_final_hidden_abs_max": 0.9987834692001343,
+        "finite": true,
+        "persistent_state_and_reset_check": "passed"
+      },
+      "correlated_normalized_noise": {
+        "predictions": 4096,
+        "raw_action_delta_rms": 0.02829298935830593,
+        "clipped_action_delta_rms": 0.01845524087548256,
+        "raw_action_delta_max": 0.214918851852417,
+        "original_action_clip_fraction": 0.507568359375,
+        "candidate_action_clip_fraction": 0.5090739130973816,
+        "candidate_final_hidden_abs_max": 0.9999997615814209,
+        "finite": true,
+        "persistent_state_and_reset_check": "passed"
+      },
+      "small_correlated_normalized_noise": {
+        "predictions": 4096,
+        "raw_action_delta_rms": 0.02713935263454914,
+        "clipped_action_delta_rms": 0.019977658987045288,
+        "raw_action_delta_max": 0.2355140596628189,
+        "original_action_clip_fraction": 0.3346625566482544,
+        "candidate_action_clip_fraction": 0.3352593183517456,
+        "candidate_final_hidden_abs_max": 0.9999116063117981,
+        "finite": true,
+        "persistent_state_and_reset_check": "passed"
+      },
+      "normalized_step": {
+        "predictions": 4096,
+        "raw_action_delta_rms": 0.01300575491040945,
+        "clipped_action_delta_rms": 0.011219716630876064,
+        "raw_action_delta_max": 0.060187339782714844,
+        "original_action_clip_fraction": 0.2891710102558136,
+        "candidate_action_clip_fraction": 0.2906900942325592,
+        "candidate_final_hidden_abs_max": 0.9999861717224121,
+        "finite": true,
+        "persistent_state_and_reset_check": "passed"
+      }
+    }
+  },
+  "serialization_roundtrip": "passed",
+  "original_sha256_unchanged": true,
+  "limitations": [
+    "This generator runs network checks only; no physical rollout was run by this script.",
+    "The policy needs memory to infer its phase; reduced retention may worsen phase tracking, stability or ascent speed.",
+    "Synthetic finite outputs do not demonstrate robot stability, success rate or faster climbing.",
+    "No best candidate has been selected from simulation results."
+  ],
+  "required_comparison": {
+    "task": "Use the original training task; Student-A/TopEnd/Mem128/Mem256 share tensor shapes",
+    "models": [
+      "C:\\Users\\5252x\\OneDrive\\문서\\RLForHexapod\\checkpoints\\model_2850.pt",
+      "C:\\Users\\5252x\\OneDrive\\문서\\RLForHexapod\\checkpoints\\model_2850_wsp.pt"
+    ],
+    "controls": "Identical environment version, robot asset, seeds, initial poses, action clipping and normalization; deterministic inference; reset GRU between episodes",
+    "initial_state": "Use phase 0 only for full-ascent timing: stair_reset buffer_ratio=0, x_ranges=((-0.1,0.1),)",
+    "metrics": [
+      "stair success rate",
+      "time to top",
+      "time to settled success",
+      "failures/falls",
+      "stair progress at timeout"
+    ],
+    "selection": "Accept only if ascent time improves without a meaningful success-rate or fall-rate regression; count failed and timed-out episodes as well as successes"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "status": "running",
+  "settings": {
+    "num_envs": 128,
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "device": "cpu",
+    "viz": "newton_gl"
+  },
+  "bundle_manifest_sha256": "ecdbacf842cad75f602bf6032ef81556dc21e1778a50ceda8f12d15032bf82d3",
+  "runs": [
+    {
+      "role": "original",
+      "seed": 42,
+      "command": [
+        "C:\\Users\\COM\\Documents\\RLForHexapod\\.venv\\Scripts\\python.exe",
+        "-u",
+        "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\eval_worker.py",
+        "--role",
+        "original",
+        "--result",
+        "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\ab2850_20261107_075007_e453e4ce\\original_seed42.json",
+        "--num_envs",
+        "128",
+        "--seed",
+        "42",
+        "--device",
+        "cpu",
+        "--viz",
+        "newton_gl"
+      ],
+      "log": "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\ab2850_20261107_075007_e453e4ce\\original_seed42.log",
+      "result": "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\ab2850_20261107_075007_e453e4ce\\original_seed42.json",
+      "status": "complete",
+      "returncode": 0,
+      "result_sha256": "12b33066fcdfcde9388228b3bc0ae15c7296595407d3be71d913962b21302245"
+    },
+    {
+      "role": "wsp",
+      "seed": 42,
+      "command": [
+        "C:\\Users\\COM\\Documents\\RLForHexapod\\.venv\\Scripts\\python.exe",
+        "-u",
+        "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\eval_worker.py",
+        "--role",
+        "wsp",
+        "--result",
+        "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\ab2850_20261107_075007_e453e4ce\\wsp_seed42.json",
+        "--num_envs",
+        "128",
+        "--seed",
+        "42",
+        "--device",
+        "cpu",
+        "--viz",
+        "newton_gl"
+      ],
+      "log": "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\ab2850_20261107_075007_e453e4ce\\wsp_seed42.log",
+      "result": "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\outputs\\wsp2850_7db9eaad37abb48f\\remote_eval_2850\\ab2850_20261107_075007_e453e4ce\\wsp_seed42.json",
+      "status": "running"
+    }
+  ]
+}

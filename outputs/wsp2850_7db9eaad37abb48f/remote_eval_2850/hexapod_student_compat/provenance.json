@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "upstream_repository": "https://github.com/qorhvma/RLForHexapod",
+  "upstream_commit": "ed53031ea774e167982bc9563a28435daefc619b",
+  "task_id": "WSP-Hexapod-Stair-Student-A",
+  "license": "BSD-3-Clause",
+  "asset_dependency": {
+    "module": "RLforHexapod.assets",
+    "exports": [
+      "ROBOT_USDA",
+      "OBSTACLES_DIR"
+    ],
+    "policy": "Use installed project asset locations without copying or modifying them.",
+    "manifest": "asset_manifest.json",
+    "verification": "Call inspect_asset_provenance using the installed exported asset paths; reject mismatches before comparing policies."
+  },
+  "behavior_changes": "None in vendored task functions/configuration; only private namespace import relocation. Separate explicit registration is in the authored package __init__.py.",
+  "expected_contract": {
+    "student_observations": 271,
+    "teacher_observations": 91,
+    "actions": 18,
+    "student_rnn_type": "gru",
+    "student_rnn_hidden_dim": 256,
+    "student_rnn_num_layers": 1
+  },
+  "files": [
+    {
+      "local_path": "env_cfg.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/config/hexapod/env_cfg.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/config/hexapod/env_cfg.py",
+      "upstream_sha256": "39fd8cb779a16725719eba627e8c99d24babf668086f237d760c7a837f5a32ae",
+      "upstream_git_blob_sha1": "21de8d60e13cc5f475f86137fec404caa816e8af",
+      "vendored_sha256": "5f2adc443a124946d820584df58b7d2cb345a0e380760ace1a81c7b9f2191155",
+      "transformations": [
+        {
+          "before": "import RLforHexapod.tasks.walk.mdp as mdp",
+          "after": "from . import mdp",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "local_path": "hexapod_env.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/config/hexapod/hexapod_env.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/config/hexapod/hexapod_env.py",
+      "upstream_sha256": "9ee0b54fa1cb15bca4a9a8715db83ad336f53e67ce1c5c6e95a1991780250376",
+      "upstream_git_blob_sha1": "3e814077feba350093144ab341e2c4f8db32568e",
+      "vendored_sha256": "9ee0b54fa1cb15bca4a9a8715db83ad336f53e67ce1c5c6e95a1991780250376",
+      "transformations": []
+    },
+    {
+      "local_path": "agents/rsl_rl_distillation_cfg.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/config/hexapod/agents/rsl_rl_distillation_cfg.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/config/hexapod/agents/rsl_rl_distillation_cfg.py",
+      "upstream_sha256": "614b29dedc736d6062a63aa5df55af281ee35dbcf1dc791d1d9332237328f076",
+      "upstream_git_blob_sha1": "ef854816992249bac5d4eedef4b2ef40e7fbb325",
+      "vendored_sha256": "614b29dedc736d6062a63aa5df55af281ee35dbcf1dc791d1d9332237328f076",
+      "transformations": []
+    },
+    {
+      "local_path": "mdp/__init__.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/mdp/__init__.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/mdp/__init__.py",
+      "upstream_sha256": "b17c66c6ad4cc7ad9675ae06e29b95a604775d1dd9635e92c68583d7d448eb81",
+      "upstream_git_blob_sha1": "ab7e9a54683ff221e96ad1da84cbc3b49a1959aa",
+      "vendored_sha256": "b17c66c6ad4cc7ad9675ae06e29b95a604775d1dd9635e92c68583d7d448eb81",
+      "transformations": []
+    },
+    {
+      "local_path": "mdp/events.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/mdp/events.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/mdp/events.py",
+      "upstream_sha256": "530dd51068dc2638b97152525ca6d8d6446fabbaa175c5d0b90b24a03e1ef62b",
+      "upstream_git_blob_sha1": "5b8f43d48a8d65a883ce8a6bf5f17b9e0aa7268f",
+      "vendored_sha256": "530dd51068dc2638b97152525ca6d8d6446fabbaa175c5d0b90b24a03e1ef62b",
+      "transformations": []
+    },
+    {
+      "local_path": "mdp/observations.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/mdp/observations.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/mdp/observations.py",
+      "upstream_sha256": "e531b0ed011d68839894719bc18bf1ad78572e84f63950590f6bf39e8900f41d",
+      "upstream_git_blob_sha1": "ee756f97c5f7cf95cb308b3ce241de606c89873f",
+      "vendored_sha256": "e531b0ed011d68839894719bc18bf1ad78572e84f63950590f6bf39e8900f41d",
+      "transformations": []
+    },
+    {
+      "local_path": "mdp/rewards.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/mdp/rewards.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/mdp/rewards.py",
+      "upstream_sha256": "c2eb5c00ebac9d9ed2889677c74e2ced72ce9bb29958fabe0235c178c2cb2784",
+      "upstream_git_blob_sha1": "ab8a71ec0b22d431a63bc7dffbb207d3f69f5e67",
+      "vendored_sha256": "c2eb5c00ebac9d9ed2889677c74e2ced72ce9bb29958fabe0235c178c2cb2784",
+      "transformations": []
+    },
+    {
+      "local_path": "mdp/stair_reward.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/mdp/stair_reward.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/mdp/stair_reward.py",
+      "upstream_sha256": "69a40d1e4abb34cc147f0d617a6132d33515be8d083ceeaad0df52dfc6ab87e4",
+      "upstream_git_blob_sha1": "4afd12e2042b9665be1dc9718600fc261e634570",
+      "vendored_sha256": "69a40d1e4abb34cc147f0d617a6132d33515be8d083ceeaad0df52dfc6ab87e4",
+      "transformations": []
+    },
+    {
+      "local_path": "mdp/terminations.py",
+      "upstream_path": "src/RLforHexapod/tasks/walk/mdp/terminations.py",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/tasks/walk/mdp/terminations.py",
+      "upstream_sha256": "8f843b35bf70cfc78b4e47c9bdf968aa0d1c4ad0d81244e2c8cf1db6ab6b09dd",
+      "upstream_git_blob_sha1": "a69faed8c0f56658f4ab401b2edfab16cc2c9667",
+      "vendored_sha256": "8f843b35bf70cfc78b4e47c9bdf968aa0d1c4ad0d81244e2c8cf1db6ab6b09dd",
+      "transformations": []
+    },
+    {
+      "local_path": "LICENSE",
+      "upstream_path": "LICENSE",
+      "upstream_url": "https://raw.githubusercontent.com/qorhvma/RLForHexapod/ed53031ea774e167982bc9563a28435daefc619b/LICENSE",
+      "upstream_sha256": "db8bed661c4c174a61581b56d8841acb4e07332ca928eb79b6fb6950c6deca56",
+      "upstream_git_blob_sha1": "620aa417ffb1f9d720c41aaca81f1c98b193773d",
+      "vendored_sha256": "db8bed661c4c174a61581b56d8841acb4e07332ca928eb79b6fb6950c6deca56",
+      "transformations": []
+    }
+  ],
+  "authored_files": [
+    "__init__.py",
+    "agents/__init__.py",
+    "verify_snapshot.py",
+    "README.md",
+    "asset_provenance.py",
+    "asset_manifest.json"
+  ],
+  "authored_sha256": {
+    "__init__.py": "a6b5157bf86ca6f04e1031ca20f94baffe11b334ff6692ebde16c3fcae12966d",
+    "agents/__init__.py": "9ab0fcdcb6348cb43211bc6f760a8b4f0d55d19635bcb0b3eb925fe4faec3bd5",
+    "verify_snapshot.py": "9b2a7abeb164a81dbf51b8b5e7e319850adf40c16a8653f63c3cf17986662059",
+    "README.md": "145dcf640743109b24268761c307c91e52d75c4d80b1c969e333cb2532425ba4",
+    "asset_provenance.py": "759f8b661a1da0e024537b0e066a60acec7685249572c3d42a8e737a34844316",
+    "asset_manifest.json": "d665711ed34d0ff3b1516d869864eaef3b5bfd8304a5604b2aca30a246447099"
+  }
+}

@@ -1,0 +1,31 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Scripts\isaaclab.exe\__main__.py", line 10, in <module>
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab\__main__.py", line 10, in main
+    cli()
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab\cli\__init__.py", line 222, in cli
+    subcommands[sys.argv[1]](sys.argv[2:])
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab\cli\__init__.py", line 62, in train
+    _exit_on_error(run_train_cli(args))
+                   ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab_rl\entrypoints\dispatch.py", line 50, in run_train_cli
+    return run_cli("train", argv)
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab_rl\entrypoints\dispatch.py", line 105, in run_cli
+    status = _run_backend(backends[library], backend_argv)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab_rl\entrypoints\dispatch.py", line 176, in _run_backend
+    return module.run(argv)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab_rl\entrypoints\backends\train_rsl_rl.py", line 120, in run
+    _run(args_cli)
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab_rl\entrypoints\backends\train_rsl_rl.py", line 130, in _run
+    show_run_summary(screen, args_cli, env_cfg, library="rsl_rl", action="train")
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab_rl\entrypoints\common.py", line 454, in show_run_summary
+    screen.summary(
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab\app\loading_screen.py", line 393, in summary
+    self._write(f"\n{summary}\n\n")
+  File "C:\Users\COM\Documents\GitHub\RLForHexapod\.venv\Lib\site-packages\isaaclab\app\loading_screen.py", line 531, in _write
+    self._console.write(text)
+UnicodeEncodeError: 'cp949' codec can't encode character '\u2584' in position 92: illegal multibyte sequence

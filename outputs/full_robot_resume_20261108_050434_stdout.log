@@ -1,0 +1,2 @@
+[INFO]: Parsing configuration from: RLforHexapod.tasks.walk.config.hexapod.env_cfg:HexapodEnvCfg
+[INFO]: Parsing configuration from: RLforHexapod.tasks.walk.config.hexapod.agents.rsl_rl_ppo_cfg:HexapodStatePPORunnerCfg

@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "upstream_commit": "ed53031ea774e167982bc9563a28435daefc619b",
+  "scope": "All files in the pinned robot/robot asset package (including selectable physics variants), plus stairs_160mm.usda. Asset bytes are not copied.",
+  "robot_root_filename": "robot.usda",
+  "files": [
+    {
+      "root": "obstacles_directory",
+      "relative_path": "stairs_160mm.usda",
+      "upstream_path": "src/RLforHexapod/assets/obstacles/stairs_160mm.usda",
+      "upstream_git_blob_sha1": "e4a3bf5a4f067095193a606c005a5d92b66a4b62",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/obstacles/stairs_160mm.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "602dfe7e4e227c0aa4cc7262df841c177c30595f098d5fa78d4b02f6a1c1b7f3",
+      "expected_size": 1657
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/Physics/mujoco.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/Physics/mujoco.usda",
+      "upstream_git_blob_sha1": "9ba0bc1c3c6413bab8ad451e00dab9d98b2e1ae3",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/Physics/mujoco.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "24d149c8b11e3e93ce66bc1d0d15b8bcf88b33b3e9fb4b17e1d369711ab9efff",
+      "expected_size": 14765
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/Physics/physics.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/Physics/physics.usda",
+      "upstream_git_blob_sha1": "a6d488e79f568650f326591dd1e1befd5b4fe68d",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/Physics/physics.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "edc3bbf095b113ef02ca89d827be788692f98b10c2d265de2b1e40ffdd43d37e",
+      "expected_size": 33670
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/Physics/physx.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/Physics/physx.usda",
+      "upstream_git_blob_sha1": "f8e0b62a00faecda643559bbd2cdda144844e3f6",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/Physics/physx.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "1f31f927f313322f38663ed50ce55e51aaefa7f7967a1dfdb6fbf6833b69f39e",
+      "expected_size": 2285
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/base.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/base.usda",
+      "upstream_git_blob_sha1": "59b61910e3d71dfd78d290b309619e14e2bd5ace",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/base.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "707b352be97041563783c6839ab0f0a5eaea40b19c25054d61ab430211e4cf03",
+      "expected_size": 130190
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/geometries.usd",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/geometries.usd",
+      "upstream_git_blob_sha1": "550c1327cf2e5428f0d6d4ae8e13cf88d0ff9fd7",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/geometries.usd",
+      "storage": "git_lfs",
+      "expected_sha256": "70b2abb30cb3647caca31261d9fb7476907dc05b63b8b659e29c0cac1ea1d4f1",
+      "expected_size": 818153
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/instances.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/instances.usda",
+      "upstream_git_blob_sha1": "75a2dada7c3f0808488d480ff269b115e061586c",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/instances.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "e422ba6575c583e5ca039df56130e230572323fc34b01b8a474ab1a049812888",
+      "expected_size": 62744
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/materials.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/materials.usda",
+      "upstream_git_blob_sha1": "51c3b6ddaf54ce31ed0bda61e82a86ef77312aba",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/materials.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "2238f821f8646a5d94459f0cf342a39355bbd0aa38e051b5c42e4e04ac76f4f1",
+      "expected_size": 1435
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "payloads/robot.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/payloads/robot.usda",
+      "upstream_git_blob_sha1": "eaca0daa2b9d3da7d486f415a756c16851da2372",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/payloads/robot.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "02416b1115f37d4a7869a1b2dba3cead45c6be14060ff1fb792cbf336952c5fa",
+      "expected_size": 6912
+    },
+    {
+      "root": "robot_directory",
+      "relative_path": "robot.usda",
+      "upstream_path": "src/RLforHexapod/assets/robot/robot/robot.usda",
+      "upstream_git_blob_sha1": "bd1ac55c337214fe1e2de171aad69e0e61bbc55c",
+      "upstream_url": "https://github.com/qorhvma/RLForHexapod/blob/ed53031ea774e167982bc9563a28435daefc619b/src/RLforHexapod/assets/robot/robot/robot.usda",
+      "storage": "git_lfs",
+      "expected_sha256": "177d8abc6c7a665dfda2d3f082f43d74eb0e8b48249b0a5b55fbf2bb265d6f3d",
+      "expected_size": 2380
+    }
+  ]
+}

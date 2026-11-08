@@ -1,0 +1,227 @@
+{
+  "run_id": "20261107T162150Z_8f2d3656",
+  "started_at": "2026-11-07T16:21:50.118524+00:00",
+  "status": "passed",
+  "scope": "Neutral-action asset/runtime and default-pose stability check; not walking or stair policy performance.",
+  "task": "Hexapod-Walk",
+  "seed": 42,
+  "steps_requested": 1100,
+  "steps_completed": 1100,
+  "device": "cuda:0",
+  "num_envs": 4,
+  "step_dt_s": 0.02,
+  "episode_length_s": 20.0,
+  "asset_usd_path": "C:\\Users\\COM\\Documents\\GitHub\\RLForHexapod\\src\\RLforHexapod\\assets\\robot\\full\\robot\\robot.usda",
+  "asset_prim_path": "/World/envs/env_[^/]+/Robot",
+  "joint_names": [
+    "L1_coxa",
+    "L1_femur",
+    "L1_tibia",
+    "L2_coxa",
+    "L2_femur",
+    "L2_tibia",
+    "L3_coxa",
+    "L3_femur",
+    "L3_tibia",
+    "L4_coxa",
+    "L4_femur",
+    "L4_tibia",
+    "L5_coxa",
+    "L5_femur",
+    "L5_tibia",
+    "L6_coxa",
+    "L6_femur",
+    "L6_tibia"
+  ],
+  "body_names": [
+    "body",
+    "coxa",
+    "femur",
+    "tibia",
+    "coxa_2",
+    "femur_2",
+    "tibia_2",
+    "coxa_3",
+    "femur_3",
+    "tibia_3",
+    "coxa_4",
+    "femur_4",
+    "tibia_4",
+    "coxa_5",
+    "femur_5",
+    "tibia_5",
+    "coxa_6",
+    "femur_6",
+    "tibia_6"
+  ],
+  "sampling": "Initial reset and each control-step state before automatic resets; not each physics substep.",
+  "initial_orientation": {
+    "quaternion_order": "xyzw",
+    "env_ids": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "quaternion_xyzw": [
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "projected_gravity_b": [
+      [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    ],
+    "body_x_world": [
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        1.0,
+        0.0,
+        0.0
+      ]
+    ],
+    "body_z_world": [
+      [
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "tilt_rad": [
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ]
+  },
+  "initial_root_pose_env0": [
+    0.5,
+    -0.5,
+    0.30000001192092896,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "initial_body_x_world_first_envs": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.0,
+      0.0
+    ]
+  ],
+  "policy_observation_shape": [
+    4,
+    67
+  ],
+  "action_shape": [
+    4,
+    18
+  ],
+  "termination_counts": {
+    "time_out": 4,
+    "base_low": 0,
+    "bad_ori": 0,
+    "sim_nan": 0
+  },
+  "termination_count_note": "Counts episode endings per term across all environments; terms can overlap.",
+  "episodes_ended": 4,
+  "failed_episodes": 0,
+  "failure_terms": [
+    "base_low",
+    "bad_ori",
+    "sim_nan"
+  ],
+  "raw_state_checks": 1101,
+  "last_attempted_step": 1100,
+  "simulated_time_s": 22.0,
+  "timeout_reset_exercised": true,
+  "root_height_range_m": [
+    0.25542718172073364,
+    0.30000001192092896
+  ],
+  "finished_at": "2026-11-07T16:22:00.896489+00:00"
+}
