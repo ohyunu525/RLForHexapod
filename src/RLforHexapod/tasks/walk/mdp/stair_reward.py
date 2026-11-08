@@ -30,7 +30,6 @@ from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import quat_apply
 
 from .observations import stairs_terrain_height, tip_offsets
-from .rewards import tibia_vertical_score
 
 # ===== 다리 =====
 # 라이다 쪽이 앞(+x)이다 (scripts/postprocess_urdf.py에서 몸통을 180° 돌림)
@@ -179,8 +178,9 @@ class StairTracker:
         return self.knees_and_tips()[1]
 
     def tibia_vertical(self, knees, tips):
-        """tibia가 지면에 수직인 정도 (N, 6). 1 = 무릎 바로 아래 발끝, 0 = 수평. 걷기 보상과 같은 식."""
-        return tibia_vertical_score(knees, tips)
+        """tibia가 지면에 수직인 정도 (N, 6). 1 = 무릎 바로 아래 발끝, 0 = 수평."""
+        tibia = tips - knees
+        return (-tibia[..., 2] / tibia.norm(dim=-1).clamp(min=1e-6)).clamp(0.0, 1.0)
 
     def body_state(self):
         """몸통 위치 (env 원점 기준) (N, 3)과 yaw 오차 (앞 방향 벡터의 y 성분) (N,)."""

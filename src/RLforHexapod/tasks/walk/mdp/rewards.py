@@ -3,36 +3,33 @@ from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.utils.math import quat_apply
 
 from .commands import base_height
-from .observations import tip_offsets
-
-
-def tibia_vertical_score(knees: torch.Tensor, tips: torch.Tensor) -> torch.Tensor:
-    """tibia가 지면에 수직인 정도 (..., 다리). 1 = 무릎 바로 아래 발끝, 0 = 수평 이상.
-    무릎→발끝 벡터가 아래를 향하는 cos 값이다. 걷기·계단 teacher가 같은 정의를 쓴다 (증류 때 자세 규칙을 맞추기 위해)."""
-    tibia = tips - knees
-    return (-tibia[..., 2] / tibia.norm(dim=-1).clamp(min=1e-6)).clamp(0.0, 1.0)
+from .observations import feet_contact, tip_offsets
 
 
 class tibia_vertical(ManagerTermBase):
-    """여섯 다리 tibia 수직도의 평균 (N,). weight = 초당 최대 점수.
+    """땅에 닿은 다리의 tibia 수직도 평균 (N,). 다리마다 exp(-기울기² / std²), 1 = 수직. 닿은 다리가 없으면 0.
 
-    tibia가 수직이면 지지력이 tibia 축으로 들어가 무릎·femur 토크가 작고, 몸 높이가 femur 각도만으로 정해진다.
-    몸을 낮출 때 다리를 바깥으로 벌려 버티다 넘어지는 것을 막기 위한 항목이다.
+    tibia가 수직이면 지지력이 tibia 축으로 들어가 무릎 토크가 작고, 몸 높이가 femur 각도만으로 정해진다.
+    체중을 받을 때만 의미가 있으므로 공중의 다리는 세지 않는다: 발을 들 때 tibia가 기우는 것은 벌하지 않는다.
+    asset_cfg와 sensor_cfg는 다리 순서가 같아야 한다 (둘 다 FOOT_BODIES, preserve_order=True).
     """
 
     def __init__(self, cfg: RewardTermCfg, env):
         super().__init__(cfg, env)
         asset_cfg: SceneEntityCfg = cfg.params["asset_cfg"]
         self.asset = env.scene[asset_cfg.name]
-        # tibia 원점은 무릎 관절 → 발끝 = 원점 + 회전 × offset (observations.py의 TIP_OFFSET)
-        self.tip_offset = tip_offsets([self.asset.body_names[i] for i in asset_cfg.body_ids], env.device)
+        # 무릎→발끝 벡터 (observations.py의 TIP_OFFSET). z는 다리 평면 밖 성분이라 뺀다:
+        # 그대로 쓰면 어떤 관절각에서도 약 8° 기울어 수직 점수가 만점에 닿지 못한다
+        self.tibia_axis = tip_offsets([self.asset.body_names[i] for i in asset_cfg.body_ids], env.device)
+        self.tibia_axis[..., 2] = 0.0
 
-    def __call__(self, env, asset_cfg: SceneEntityCfg):
-        data = self.asset.data
-        quat = data.body_quat_w.torch[:, asset_cfg.body_ids]
-        knees = data.body_pos_w.torch[:, asset_cfg.body_ids]
-        tips = knees + quat_apply(quat, self.tip_offset.expand(quat.shape[0], -1, -1))
-        return tibia_vertical_score(knees, tips).mean(dim=1)
+    def __call__(self, env, asset_cfg: SceneEntityCfg, sensor_cfg: SceneEntityCfg, std: float, threshold: float = 1.0):
+        quat = self.asset.data.body_quat_w.torch[:, asset_cfg.body_ids]
+        axis_w = quat_apply(quat, self.tibia_axis.expand(quat.shape[0], -1, -1))
+        tilt = torch.atan2(torch.norm(axis_w[..., :2], dim=-1), -axis_w[..., 2])  # 수직에서 기운 각도 [rad]
+        score = torch.exp(-torch.square(tilt) / std**2)
+        contact = feet_contact(env, sensor_cfg, threshold)
+        return torch.sum(score * contact, dim=1) / contact.sum(dim=1).clamp(min=1.0)
 
 
 def track_base_height_exp(env, command_name: str, std: float,
