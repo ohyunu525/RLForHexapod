@@ -3,6 +3,16 @@ import gymnasium as gym
 _PACKAGE = __name__
 
 gym.register(
+    id="Hexapod-Mixed-Flat-Stair",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point":f"{_PACKAGE}.mixed_env_cfg:HexapodMixedEnvCfg",
+        "rsl_rl_cfg_entry_point":f"{_PACKAGE}.agents.rsl_rl_ppo_cfg:HexapodMixedPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Hexapod-Walk",
     entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
     disable_env_checker=True,

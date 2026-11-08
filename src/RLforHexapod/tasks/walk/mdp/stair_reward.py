@@ -115,6 +115,11 @@ class StairTracker:
 
         # PHASES 표를 텐서로
         device, n, num_feet = env.device, env.num_envs, len(FOOT_BODIES)
+        # Opt-in mixed-task cohort. Ordinary stair tasks retain all environments.
+        active = getattr(env, "stair_active_mask", None)
+        self.active_mask = (torch.ones(n, dtype=torch.bool, device=device) if active is None else active)
+        if self.active_mask.shape != (n,) or self.active_mask.dtype != torch.bool:
+            raise ValueError("Stair active mask must be one boolean per environment")
         self.table_kind = torch.tensor([p.kind for p in PHASES], device=device)
         self.table_body_x = torch.tensor([p.body_x for p in PHASES], device=device)
         self.table_rear_move = torch.tensor([p.feet == REAR for p in PHASES], device=device)
@@ -168,7 +173,7 @@ class StairTracker:
 
     def moving_feet(self, phase):
         """지금 옮기는 발 (N, 6). 전진과 정지 중에는 없음."""
-        return self.table_moving[phase] & (self.move < self.final_advance).unsqueeze(1)
+        return self.table_moving[phase] & ((self.move < self.final_advance) & self.active_mask).unsqueeze(1)
 
     def knees_and_tips(self):
         """무릎과 발끝 추정 위치 (env 원점 기준). 각각 (N, 6, 3). 발끝 = 무릎 위치 + 회전 × offset."""
@@ -205,10 +210,10 @@ class StairTracker:
         riser, top = self.riser_and_top(level)
         moving = self.moving_feet(phase)
         kind = self.table_kind[phase]
-        in_stairs = self.move < self.final_advance
-        advancing = (kind == ADVANCE) & (self.move <= self.final_advance)
+        in_stairs = (self.move < self.final_advance) & self.active_mask
+        advancing = (kind == ADVANCE) & (self.move <= self.final_advance) & self.active_mask
         moving_pair = (kind == MOVE) & in_stairs
-        settling = self.move == self.settle_move
+        settling = (self.move == self.settle_move) & self.active_mask
 
         knees, tips = self.knees_and_tips()
         terrain = stairs_terrain_height(self.stairs, tips[..., 0], tips[..., 1])
@@ -227,16 +232,17 @@ class StairTracker:
         fold = (self.asset.data.joint_pos.torch[:, self.front_coxa_ids] / self.front_parallel).clamp(max=1.0)
 
         # 새 단계의 첫 step: 신기록을 지금 값으로
-        self.best_body_x = torch.where(self.need_init, capped_body_x, self.best_body_x)
-        self.best_z = torch.where(self.need_init.unsqueeze(1), capped_z, self.best_z)
-        self.best_fold = torch.where(self.need_init.unsqueeze(1), fold, self.best_fold)
-        self.foot_touched &= ~self.need_init.unsqueeze(1)
-        self.foot_placed &= ~self.need_init.unsqueeze(1)
-        self.need_init[:] = False
+        initialize = self.need_init & self.active_mask
+        self.best_body_x = torch.where(initialize, capped_body_x, self.best_body_x)
+        self.best_z = torch.where(initialize.unsqueeze(1), capped_z, self.best_z)
+        self.best_fold = torch.where(initialize.unsqueeze(1), fold, self.best_fold)
+        self.foot_touched &= ~initialize.unsqueeze(1)
+        self.foot_placed &= ~initialize.unsqueeze(1)
+        self.need_init[self.active_mask] = False
 
         # tibia 수직도: 모든 단계에서 여섯 다리의 평균
         vertical = self.tibia_vertical(knees, tips)
-        self.vertical_score = vertical.mean(1)
+        self.vertical_score = torch.where(self.active_mask, vertical.mean(1), 0.)
 
         # 발끝 높이는 tibia를 안쪽으로 접지 않은 자세로만 인정한다. 몸통 중심에서 수평 거리로 안쪽/바깥쪽을 판단
         center = self.body_state()[0][:, :2].unsqueeze(1)
@@ -252,9 +258,9 @@ class StairTracker:
         # 보상: 신기록 갱신량 (단위 m)
         gain_body = (capped_body_x - self.best_body_x).clamp(min=0.0) * body_counts
         gain_z = ((capped_z - self.best_z).clamp(min=0.0) * z_counts).sum(1)
-        self.progress = 2.0*gain_body + gain_z
+        self.progress = torch.where(self.active_mask, 2.0*gain_body + gain_z, 0.)
         # 보상받지 못한 전진도 기록해야 나중에 발을 들었을 때 소급 보상되지 않는다.
-        self.best_body_x = torch.maximum(self.best_body_x, capped_body_x)
+        self.best_body_x = torch.where(self.active_mask, torch.maximum(self.best_body_x, capped_body_x), self.best_body_x)
         self.best_z = torch.where(z_counts, torch.maximum(self.best_z, capped_z), self.best_z)
 
         # 보상: 뒷발 옮기기 중 앞다리를 평행하게 돌린 비율의 신기록 (두 다리의 합)
@@ -296,7 +302,7 @@ class StairTracker:
 
         # 벌점: 몸통의 후진 속도 (전진 보상은 신기록만 주므로 후진 비용이 따로 없다)
         backward = (-self.asset.data.root_vel_w.torch[:, 0]).clamp(min=0.0)
-        self.backward_speed = backward * (backward > gait.backward_speed_tol)
+        self.backward_speed = torch.where(self.active_mask, backward * (backward > gait.backward_speed_tol), 0.)
 
         # 정지: 여섯 발이 꼭대기에 있고 몸통이 멈춤
         speed = self.asset.data.root_vel_w.torch.norm(dim=1)
@@ -305,7 +311,8 @@ class StairTracker:
         # 멈춘 상태가 끊기면 시간을 처음부터 다시 잰다
         self.steady_time = torch.where(steady, self.steady_time + self.env.step_dt, torch.zeros_like(self.steady_time))
         settle_done = settling & (self.steady_time >= gait.hold_time)
-        self.settle_score = torch.exp(-(speed / gait.speed_std) ** 2) * settling * all_kept
+        self.settle_score = torch.where(self.active_mask,
+            torch.exp(-(speed / gait.speed_std) ** 2) * settling * all_kept, 0.)
 
         # 다음 단계로
         # 유지 시간은 MOVE에만 적용한다. 전진 중 걸음을 계속 딛는 동작에는 적용하지 않는다.
@@ -314,7 +321,7 @@ class StairTracker:
             move_ready, self.move_ready_time + self.env.step_dt, torch.zeros_like(self.move_ready_time)
         )
         held_move_done = move_ready & (self.move_ready_time + 1e-6 >= gait.move_contact_hold_time)
-        self.just_done = (advance_done & all_kept) | held_move_done | settle_done
+        self.just_done = ((advance_done & all_kept) | held_move_done | settle_done) & self.active_mask
         if self.diagnostics_enabled:
             # env.step()은 곧 종료 환경을 자동 리셋한다. 현재 단계와 물리 상태를 여기서 복사한다.
             history = self.sensor.data.net_normal_forces_w_history.torch
@@ -345,6 +352,10 @@ class StairTracker:
             save_stair_states(self.env, save.nonzero().squeeze(-1), self.move[save], gait.buffer_size)
 
     def reset(self, env_ids, moves):
+        if isinstance(env_ids, slice):
+            env_ids = torch.arange(self.env.num_envs, device=self.env.device)[env_ids]
+        selected = self.active_mask[env_ids]
+        env_ids, moves = env_ids[selected], moves[selected]
         self.ended_move[env_ids] = self.move[env_ids]
         self.move[env_ids] = moves
         self.need_init[env_ids] = True
@@ -375,6 +386,12 @@ def save_stair_states(env, env_ids, moves, size: int = 1000):
     S -> size (버퍼 크기)
     stair_states : (S, 7 + 6 + J + J)
     """
+    active = getattr(env, "stair_active_mask", None)
+    if active is not None:
+        selected = active[env_ids]
+        env_ids, moves = env_ids[selected], moves[selected]
+    if len(env_ids) == 0:
+        return
     if not hasattr(env, "stair_states"):
         # env에 stair_states가 없으면 생성
         env.stair_states = {}
@@ -422,6 +439,11 @@ def reset_stair_state(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
         # 첫 env.reset()은 slice(None)으로 호출됨
         # 궁극적으로 slice(None)은 인덱스 tensor와 똑같지만, 길이와 형태에 대한 데이터가 없다.
         env_ids = torch.arange(env.num_envs, device=env.device)
+    active = getattr(env, "stair_active_mask", None)
+    if active is not None:
+        env_ids = env_ids[active[env_ids]]
+    if len(env_ids) == 0:
+        return
 
     tracker = get_tracker(env)
     # n: reset 해당 env 인덱스 갯수
@@ -469,7 +491,13 @@ class stair_phase_bonus(ManagerTermBase):
 
     def reset(self, env_ids=None):
         tracker = get_tracker(self._env)
-        ended = tracker.ended_move[slice(None) if env_ids is None else env_ids]
+        ids = torch.arange(self._env.num_envs, device=self._env.device) if env_ids is None else env_ids
+        if isinstance(ids, slice):
+            ids = torch.arange(self._env.num_envs, device=self._env.device)[ids]
+        ids = ids[tracker.active_mask[ids]]
+        if len(ids) == 0:
+            return
+        ended = tracker.ended_move[ids]
         log = self._env.extras["log"]
         log["Metrics/stair_move"] = ended.float().mean()
         log["Metrics/stair_level"] = (ended // NUM_PHASES).float().mean()

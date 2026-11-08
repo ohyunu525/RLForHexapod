@@ -5,3 +5,4 @@ from .terminations import *
 from .events import *
 from .observations import *
 from .stair_reward import *
+from .mixed_terrain import *

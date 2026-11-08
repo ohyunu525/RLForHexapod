@@ -103,3 +103,19 @@ class HexapodWspStopPPORunnerCfg(HexapodRefinePPORunnerCfg):
         learning_rate=3.0e-5, schedule="fixed", gamma=0.995, lam=0.95,
         desired_kl=0.01, max_grad_norm=1.0,
     )
+
+
+@configclass
+class HexapodMixedPPORunnerCfg(HexapodWspStopPPORunnerCfg):
+    """Single shared 95-input policy for fixed-stage flat/stair batches."""
+
+    experiment_name = "hexapod_mixed_flat_stair"
+    max_iterations = 2000
+    # A global 45 s random age would already expire many 20 s flat episodes.
+    init_at_random_ep_len = False
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0, use_clipped_value_loss=True, clip_param=0.1,
+        entropy_coef=0.0005, num_learning_epochs=5, num_mini_batches=8,
+        learning_rate=5.0e-5, schedule="fixed", gamma=0.995, lam=0.95,
+        desired_kl=0.01, max_grad_norm=1.0,
+    )
