@@ -2,14 +2,18 @@
 .SYNOPSIS
 Run one mixed-terrain training invocation with persistent native output handles.
 #>
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'WarmStart')]
 param(
     [Parameter(Mandatory = $true)][string]$PythonPath,
-    [Parameter(Mandatory = $true)][string]$Checkpoint,
+    [Parameter(Mandatory = $true, ParameterSetName = 'WarmStart')][string]$Checkpoint,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Resume')][string]$ResumeCheckpoint,
+    [Parameter(ParameterSetName = 'Resume')][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$CheckpointSha256,
     [ValidateRange(1, 2147483647)][int]$NumEnvs = 5120,
     [ValidateRange(1, 2147483647)][int]$MaxIterations = 2000,
     [ValidateRange(0.0, 1.0)][double]$FlatFraction = 0.5,
     [ValidateRange(0.005, 0.16)][double]$StairHeight = 0.04,
+    [switch]$HeightCurriculum,
+    [switch]$RandomStairHeight,
     [ValidateRange(0.000001, 1.0)][double]$StairRewardScale = 0.1,
     [string]$Device = 'cuda:0',
     [ValidateRange(0, 2147483647)][int]$Seed = 42,
@@ -21,6 +25,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $sourceHash = '725c9696e82ef25e4b13e20c648562d17be6c79a6c1bc6ebd81936fbf2590527'
+$resume = $PSCmdlet.ParameterSetName -eq 'Resume'
 if (-not $RunName) { $RunName = 'mixed_' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '_' + [Guid]::NewGuid().ToString('N').Substring(0,8) }
 $logDirectory = Join-Path $repoRoot "outputs\mixed_terrain_launch\$RunName"
 $null = New-Item -ItemType Directory -Path $logDirectory
@@ -29,8 +34,9 @@ $worker = $null
 $oldPythonPath = $env:PYTHONPATH
 $state = [ordered]@{
     status = 'preparing'; run_name = $RunName; task = 'Hexapod-Mixed-Flat-Stair'
-    runtime_root = $repoRoot; source_sha256 = $sourceHash; num_envs = $NumEnvs; max_iterations = $MaxIterations
+    runtime_root = $repoRoot; resume = $resume; num_envs = $NumEnvs; max_iterations = $MaxIterations
     flat_fraction = $FlatFraction; stair_height = $StairHeight; stair_reward_scale = $StairRewardScale
+    automatic_height_curriculum = [bool]$HeightCurriculum; random_stair_height = [bool]$RandomStairHeight
     seed = $Seed; device = $Device; verify_only = [bool]$VerifyOnly; monitoring_enabled = $false
     started_at = [DateTime]::UtcNow.ToString('o'); steps = @(); active_process_id = $null
 }
@@ -71,18 +77,28 @@ Push-Location -LiteralPath $repoRoot
 try {
     Save-Status
     $pythonExecutable = (Resolve-Path -LiteralPath $PythonPath).Path
-    $checkpointPath = (Resolve-Path -LiteralPath $Checkpoint).Path
-    if ((File-Hash $checkpointPath) -ne $sourceHash) { throw 'Source checkpoint differs from the verified final model_1999.' }
+    $checkpointInput = if ($resume) { $ResumeCheckpoint } else { $Checkpoint }
+    $checkpointFlag = if ($resume) { '--resume-checkpoint' } else { '--checkpoint' }
+    $checkpointPath = (Resolve-Path -LiteralPath $checkpointInput).Path
+    $checkpointHash = File-Hash $checkpointPath
+    if ($resume) {
+        if ($CheckpointSha256 -and $checkpointHash -ne $CheckpointSha256) {
+            throw 'Resume checkpoint differs from the submitted SHA-256.'
+        }
+    } elseif ($checkpointHash -ne $sourceHash) { throw 'Source checkpoint differs from the verified final model_1999.' }
     $state['python_executable'] = $pythonExecutable; $state['checkpoint'] = $checkpointPath
+    $state['source_sha256'] = $checkpointHash
     $env:PYTHONPATH = (Join-Path $repoRoot 'src') + [IO.Path]::PathSeparator + $oldPythonPath
     Invoke-Stage '01_asset' @('-X','utf8','-u',(Join-Path $PSScriptRoot 'validate_robot_asset.py'),'--require-manifest')
     $culture = [Globalization.CultureInfo]::InvariantCulture
     $arguments = @('-X','utf8','-u',(Join-Path $PSScriptRoot 'train_mixed_terrain.py'),
-        '--checkpoint',$checkpointPath,'--checkpoint_sha256',$sourceHash,
+        $checkpointFlag,$checkpointPath,'--checkpoint_sha256',$checkpointHash,
         '--num_envs',$NumEnvs.ToString(),'--max_iterations',$MaxIterations.ToString(),
         '--flat_fraction',$FlatFraction.ToString('R',$culture),'--stair_height',$StairHeight.ToString('R',$culture),
         '--stair_reward_scale',$StairRewardScale.ToString('R',$culture),
         '--seed',$Seed.ToString(),'--device',$Device,'--viz','none','--run_name',$RunName)
+    if ($HeightCurriculum) { $arguments += '--height-curriculum' }
+    if ($RandomStairHeight) { $arguments += '--random-stair-height' }
     if ($VerifyOnly) { $arguments += '--verify-only' }
     Invoke-Stage '02_train' $arguments
     $state.status = if ($VerifyOnly) { 'verified_initialization_without_ppo' } else { 'completed' }

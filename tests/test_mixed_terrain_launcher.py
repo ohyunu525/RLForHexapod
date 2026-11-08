@@ -92,6 +92,40 @@ class MixedLauncherTests(unittest.TestCase):
             self.assertIn("FAKE_STDERR", Path(step["stderr"]).read_text(encoding="utf-8-sig"))
         self.assertTrue(capture.exists())
 
+    def test_resume_launch_passes_checkpoint_and_terrain_modes(self):
+        repo, checkpoint, _, env = self.prepare("resume launch")
+        checkpoint.write_bytes(b"different from the pinned flat checkpoint")
+        command = [str(POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                   str(repo / "scripts/run_mixed_terrain.ps1"), "-PythonPath", str(self.python),
+                   "-ResumeCheckpoint", str(checkpoint), "-HeightCurriculum", "-RandomStairHeight", "-VerifyOnly"]
+        result = subprocess.run(command, env=env, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        status_path = next((repo / "outputs/mixed_terrain_launch").glob("*/launcher_status.json"))
+        state = json.loads(status_path.read_text(encoding="utf-8"))
+        arguments = state["steps"][1]["arguments"]
+        self.assertEqual(arguments[arguments.index("--resume-checkpoint") + 1], str(checkpoint))
+        self.assertEqual(state["source_sha256"], hashlib.sha256(checkpoint.read_bytes()).hexdigest())
+        self.assertIn("--height-curriculum", arguments)
+        self.assertIn("--random-stair-height", arguments)
+
+    def test_resume_submission_pins_checkpoint_digest(self):
+        repo, checkpoint, capture, env = self.prepare("resume submission")
+        checkpoint.write_bytes(b"different from the pinned flat checkpoint")
+        command = [str(POWERSHELL), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                   str(repo / "scripts/submit_mixed_terrain.ps1"), "-PythonPath", str(self.python),
+                   "-ResumeCheckpoint", str(checkpoint), "-HeightCurriculum", "-RandomStairHeight", "-PrepareOnly"]
+        result = subprocess.run(command, env=env, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        receipt_path = next((repo / "outputs/mixed_terrain_submit").glob("*/submission.json"))
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        arguments = receipt["arguments"]
+        self.assertEqual(arguments[arguments.index("-ResumeCheckpoint") + 1], str(checkpoint))
+        self.assertEqual(arguments[arguments.index("-CheckpointSha256") + 1], receipt["source_sha256"])
+        self.assertEqual(receipt["source_sha256"], hashlib.sha256(checkpoint.read_bytes()).hexdigest())
+        self.assertIn("-HeightCurriculum", arguments)
+        self.assertIn("-RandomStairHeight", arguments)
+        self.assertFalse(capture.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

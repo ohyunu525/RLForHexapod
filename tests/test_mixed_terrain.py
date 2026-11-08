@@ -64,6 +64,29 @@ def fixture(fraction=.5):
     return f
 
 
+def dynamic_reset_fixture(f):
+    f.env.cfg.stair_height = f.env.cfg.stairs.step_height = 0.04
+    f.env.episode_length_buf = torch.zeros(f.env.num_envs, dtype=torch.long)
+    f.env.reset_buf = torch.zeros(f.env.num_envs, dtype=torch.bool)
+    manager = f.env.termination_manager
+    manager.stair_success = torch.zeros(f.env.num_envs, dtype=torch.bool)
+    manager.get_term = lambda name: getattr(manager, name)
+    f.data.default_root_pose = SimpleNamespace(torch=f.data.root_pose_w.torch.clone())
+    f.data.default_root_pose.torch[:, 1] = 0.0
+    robot = f.env.scene["robot"]
+    robot.num_joints = 2
+    robot.write_root_pose_to_sim_index = lambda root_pose, env_ids: f.data.root_pose_w.torch.index_copy_(
+        0, env_ids, root_pose
+    )
+
+    def set_heights(env, ids, heights):
+        if not hasattr(env, "mixed_stair_heights"):
+            env.mixed_stair_heights = torch.zeros(env.num_envs)
+        env.mixed_stair_heights[ids] = heights
+
+    return patch.object(mixed, "set_mixed_stair_heights", set_heights)
+
+
 class MixedTerrainTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):torch.set_num_threads(1)
@@ -150,6 +173,110 @@ class MixedTerrainTests(unittest.TestCase):
     def test_pure_group_modes(self):
         for fraction,expected in ((0.,0),(1.,4),(.49,1)):
             f=fixture(fraction);self.assertEqual(int(f.env.mixed_flat_mask.sum()),expected)
+
+    def test_curriculum_advances_one_stage_per_eligible_window_and_caps_at_16cm(self):
+        curriculum = mixed.MixedStairCurriculum(0.04)
+        curriculum.pending = 100
+        curriculum.record([True] * 79, ended_count=79)
+        self.assertEqual(curriculum.available_trials, 0)
+        curriculum.record([False] * 21, ended_count=21)
+        self.assertEqual(curriculum.height, 0.04)
+        self.assertEqual(curriculum.last_success_rate, 0.79)
+
+        curriculum.pending = 100
+        curriculum.record([True] * 80, ended_count=80)
+        self.assertEqual(curriculum.height, 0.04)
+        self.assertEqual(curriculum.available_trials, 0)
+        curriculum.record([False] * 20, ended_count=20)
+        self.assertEqual(curriculum.height, 0.06)
+        self.assertEqual(len(curriculum.outcomes), 0)
+        for expected_height in (0.08, 0.12, 0.16, 0.16):
+            curriculum.pending = 100
+            curriculum.record([True] * 100, ended_count=100)
+            self.assertEqual(curriculum.height, expected_height)
+
+    def test_curriculum_reset_ignores_unenrolled_and_aborted_runs_and_preserves_flat_cohort(self):
+        f = fixture(0.25)
+        env = f.env
+        env.cfg.height_curriculum = True
+        env.cfg.stair_curriculum_state = {"stage": 3, "outcomes": [False] * 19 + [True] * 80}
+        manager = env.termination_manager
+        with dynamic_reset_fixture(f):
+            mixed.mixed_reset(env, slice(None))
+            self.assertEqual(f.tracker.move.tolist(), [0, 0, 0, 0])
+            self.assertEqual(f.data.root_pose_w.torch[0, 1].item(), 4.0)
+            torch.testing.assert_close(env.mixed_stair_heights, torch.tensor([0.0, 0.12, 0.12, 0.12]))
+            self.assertEqual(mixed.mixed_curriculum_state(env), env.cfg.stair_curriculum_state)
+            enrolled = env.mixed_stair_trial.nonzero().flatten()
+            self.assertEqual(len(enrolled), 1)
+            untracked = env.mixed_stair_trial.logical_not().nonzero().flatten()[1:]
+            other, old = untracked[:1], untracked[1:]
+
+            # A UI reset marks termination but does not set the automatic-reset mask.
+            env.episode_length_buf[enrolled] = 100
+            manager.terminated[enrolled] = True
+            mixed.mixed_reset(env, enrolled)
+            self.assertEqual(mixed.mixed_curriculum_state(env), env.cfg.stair_curriculum_state)
+            self.assertTrue(env.mixed_stair_trial[enrolled].item())
+
+            env.episode_length_buf[1:] = 100
+            env.reset_buf[1:] = True
+            manager.time_outs[1:] = True
+            manager.stair_success[1:] = True
+            f.tracker.move[1:] = f.tracker.done_move
+            mixed.mixed_reset(env, other)
+            self.assertEqual(mixed.mixed_curriculum_state(env), env.cfg.stair_curriculum_state)
+
+            # A simultaneous stair success and failure counts as a failure.
+            manager.terminated[enrolled] = True
+            mixed.mixed_reset(env, enrolled)
+            self.assertEqual(mixed.mixed_curriculum_state(env), {"stage": 4, "outcomes": []})
+            self.assertEqual(env.mixed_stair_curriculum.last_success_rate, 0.8)
+            torch.testing.assert_close(env.mixed_stair_heights[enrolled], torch.tensor([0.16]))
+            torch.testing.assert_close(env.mixed_stair_heights[old], torch.tensor([0.12]))
+
+            mixed.mixed_reset(env, old)
+            self.assertEqual(mixed.mixed_curriculum_state(env), {"stage": 4, "outcomes": []})
+            torch.testing.assert_close(env.mixed_stair_heights[old], torch.tensor([0.16]))
+            self.assertEqual(f.data.root_pose_w.torch[0, 1].item(), 4.0)
+
+            # The reward pass can advance the tracker after terminations were
+            # computed. A pure time-out at that boundary still fails the trial.
+            manager.terminated[enrolled] = False
+            manager.stair_success[enrolled] = False
+            f.tracker.move[enrolled] = f.tracker.done_move
+            mixed.mixed_reset(env, enrolled)
+            mixed.mixed_reset(env, old)
+            self.assertEqual(mixed.mixed_curriculum_state(env), {"stage": 4, "outcomes": [False, True]})
+
+    def test_random_height_and_curriculum_use_separate_stair_episodes(self):
+        for curriculum in (False, True):
+            with self.subTest(curriculum=curriculum), torch.random.fork_rng():
+                torch.manual_seed(12)
+                f = fixture()
+                env = f.env
+                env.cfg.height_curriculum = curriculum
+                env.cfg.random_stair_height = True
+                samples = []
+                with dynamic_reset_fixture(f):
+                    for _ in range(32):
+                        mixed.mixed_reset(env, torch.tensor([2, 3]))
+                        heights = env.mixed_stair_heights[2:]
+                        fixed = heights == 0.04
+                        if curriculum:
+                            self.assertTrue(torch.equal(env.mixed_stair_trial[2:], fixed))
+                        else:
+                            self.assertFalse(fixed.any())
+                        samples.extend(heights[~fixed].tolist())
+                self.assertTrue(all(-0.16 <= height <= 0.16 for height in samples))
+                self.assertLess(min(samples), 0.0)
+                self.assertGreater(max(samples), 0.0)
+                if curriculum:
+                    self.assertLess(len(samples), 64)
+                    self.assertEqual(mixed.mixed_curriculum_state(env), {"stage": 0, "outcomes": []})
+                else:
+                    self.assertEqual(len(samples), 64)
+                    self.assertIsNone(mixed.mixed_curriculum_state(env))
 
     def test_fixed_stair_usd_and_analytic_surface_match(self):
         geometry=observations.StairsGeometryCfg()

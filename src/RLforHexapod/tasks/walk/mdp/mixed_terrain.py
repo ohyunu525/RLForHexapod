@@ -9,8 +9,110 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.utils.math import quat_apply
 
 from .commands import BaseHeightCommand
-from .observations import stairs_terrain_height, tip_offsets
+from .mixed_stair_geometry import MAX_RANDOM_STAIR_HEIGHT, set_mixed_stair_heights
+from .observations import env_stair_step_height, env_stair_terrain_height, tip_offsets
 from .stair_reward import get_tracker, reset_stair_state, stair_phase_obs, stair_feet_target_obs, stair_body_target_obs
+
+
+MIXED_CURRICULUM_HEIGHTS = (0.04, 0.06, 0.08, 0.12, 0.16)
+CURRICULUM_WINDOW = 100
+CURRICULUM_MIN_SUCCESSES = 80
+
+
+class MixedStairCurriculum:
+    """Evaluate batches enrolled at episode start so fast successes cannot bias promotion."""
+
+    def __init__(self, height, state=None):
+        self.stage = MIXED_CURRICULUM_HEIGHTS.index(height)
+        self.outcomes = []
+        self.pending = 0
+        self.last_success_rate = None
+        if state is not None:
+            if not isinstance(state, dict):
+                raise ValueError("Invalid mixed stair curriculum checkpoint state")
+            stage = state.get("stage")
+            outcomes = state.get("outcomes")
+            if (type(stage) is not int or not 0 <= stage < len(MIXED_CURRICULUM_HEIGHTS)
+                    or not isinstance(outcomes, list) or len(outcomes) >= CURRICULUM_WINDOW
+                    or any(type(outcome) is not bool for outcome in outcomes)):
+                raise ValueError("Invalid mixed stair curriculum checkpoint state")
+            self.stage = stage
+            self.outcomes.extend(outcomes)
+
+    @property
+    def height(self):
+        return MIXED_CURRICULUM_HEIGHTS[self.stage]
+
+    @property
+    def available_trials(self):
+        return CURRICULUM_WINDOW - len(self.outcomes) - self.pending
+
+    def record(self, outcomes, ended_count):
+        self.pending -= ended_count
+        self.outcomes.extend(outcomes)
+        if len(self.outcomes) == CURRICULUM_WINDOW:
+            successes = sum(self.outcomes)
+            self.last_success_rate = successes / CURRICULUM_WINDOW
+            if successes >= CURRICULUM_MIN_SUCCESSES and self.stage < len(MIXED_CURRICULUM_HEIGHTS) - 1:
+                self.stage += 1
+            self.outcomes.clear()
+
+
+def _mixed_curriculum(env):
+    if not getattr(env.cfg, "height_curriculum", False):
+        return None
+    if not hasattr(env, "mixed_stair_curriculum"):
+        env.mixed_stair_curriculum = MixedStairCurriculum(
+            env.cfg.stair_height, getattr(env.cfg, "stair_curriculum_state", None)
+        )
+    return env.mixed_stair_curriculum
+
+
+def mixed_curriculum_state(env):
+    """Return checkpoint-safe stage and window data for the next reset."""
+    curriculum = _mixed_curriculum(env)
+    if curriculum is None:
+        return None
+    return {"stage": curriculum.stage, "outcomes": list(curriculum.outcomes)}
+
+
+def _reset_mixed_stair_heights(env, stair_ids):
+    curriculum = _mixed_curriculum(env)
+    randomize = getattr(env.cfg, "random_stair_height", False)
+    if curriculum is None:
+        heights = torch.empty(len(stair_ids), device=env.device).uniform_(
+            -MAX_RANDOM_STAIR_HEIGHT, MAX_RANDOM_STAIR_HEIGHT
+        )
+    else:
+        if not hasattr(env, "mixed_stair_trial"):
+            env.mixed_stair_trial = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        trials = env.mixed_stair_trial
+        ended = stair_ids[trials[stair_ids]]
+        if len(ended):
+            # The visualizer can mark manually reset rows as terminated after
+            # Isaac Lab builds its automatic-reset mask. Only use that mask.
+            done = (env.episode_length_buf[ended] > 0) & env.reset_buf[ended]
+            completed = ended[done]
+            manager = env.termination_manager
+            success = manager.get_term("stair_success")[completed] & ~manager.terminated[completed]
+            curriculum.record(success.tolist(), len(ended))
+            trials[ended] = False
+
+        heights = torch.full((len(stair_ids),), curriculum.height, device=env.device)
+        fixed_ids = stair_ids
+        if randomize:
+            randomized = torch.rand(len(stair_ids), device=env.device) < 0.5
+            sampled = torch.empty_like(heights).uniform_(-MAX_RANDOM_STAIR_HEIGHT, MAX_RANDOM_STAIR_HEIGHT)
+            heights = torch.where(randomized, sampled, heights)
+            fixed_ids = stair_ids[~randomized]
+        available = curriculum.available_trials
+        if available and len(fixed_ids):
+            if len(fixed_ids) > available:
+                sampled_ids = torch.randperm(len(fixed_ids), device=env.device)[:available]
+                fixed_ids = fixed_ids[sampled_ids]
+            trials[fixed_ids] = True
+            curriculum.pending += len(fixed_ids)
+    set_mixed_stair_heights(env, stair_ids, heights)
 
 
 def mixed_masks(env):
@@ -47,7 +149,15 @@ def mixed_reset(env, env_ids, flat_lane_y=4., stair_x_ranges=((-0.1,0.1),(0.30,0
     # Initialize tracker even in pure-flat validation; active mask prevents all
     # flat progress, buffer writes and stair statistics.
     get_tracker(env)
-    if len(stair_ids):reset_stair_state(env,stair_ids,stair_x_ranges,buffer_ratio)
+    if len(stair_ids):
+        dynamic = getattr(env.cfg, "height_curriculum", False) or getattr(env.cfg, "random_stair_height", False)
+        if dynamic:
+            _reset_mixed_stair_heights(env, stair_ids)
+            # Replay states belong to a particular geometry and skip some of
+            # the course. Dynamic episodes always start at the first approach.
+            reset_stair_state(env, stair_ids, stair_x_ranges[:1], buffer_ratio=0.0)
+        else:
+            reset_stair_state(env, stair_ids, stair_x_ranges, buffer_ratio)
 
 
 class MixedVelocityCommand(UniformVelocityCommand):
@@ -77,7 +187,7 @@ class MixedHeightCommand(BaseHeightCommand):
 
     def _update_metrics(self):
         pose=self.robot.data.root_pos_w.torch-self._env.scene.env_origins
-        terrain=stairs_terrain_height(self._env.cfg.stairs,pose[:,0],pose[:,1])
+        terrain=env_stair_terrain_height(self._env,pose[:,0],pose[:,1])
         self._error_sum+=(self.height_command[:,0]-(pose[:,2]-terrain)).abs()
         self._step_count+=1.
 
@@ -97,9 +207,9 @@ class mixed_stair_context(ManagerTermBase):
         quat=d.body_quat_w.torch[:,self.ids]
         tips=d.body_pos_w.torch[:,self.ids]+quat_apply(quat,self.offsets.expand(env.num_envs,-1,-1))
         tips=tips-env.scene.env_origins[:,None,:]
-        ground=stairs_terrain_height(env.cfg.stairs,tips[...,0],tips[...,1])
+        ground=env_stair_terrain_height(env,tips[...,0],tips[...,1])
         body_z=d.root_pos_w.torch[:,2:3]-env.scene.env_origins[:,2:3]
-        height=torch.full_like(body_z,env.cfg.stairs.step_height)
+        height=env_stair_step_height(env).unsqueeze(1)
         context=torch.cat((tips[...,2]-ground,body_z-ground,height,
                            stair_phase_obs(env),stair_feet_target_obs(env),stair_body_target_obs(env)),dim=1)
         if context.shape!=(env.num_envs,28):raise ValueError("Mixed stair context must have 28 columns")
@@ -172,6 +282,12 @@ class mixed_reward_bundle(ManagerTermBase):
         for _,_,function in self.terms:
             if isinstance(function,ManagerTermBase):function.reset(ids)
         log=self._env.extras.setdefault("log",{})
+        if self.group == "stair":
+            curriculum = _mixed_curriculum(self._env)
+            if curriculum is not None:
+                log["Metrics/Mixed/stair_curriculum_height_m"] = curriculum.height
+                log["Metrics/Mixed/stair_curriculum_window_count"] = len(curriculum.outcomes)
+                log["Metrics/Mixed/stair_curriculum_success_rate"] = curriculum.last_success_rate or 0.0
         log[f"Metrics/Mixed/{self.group}_reward_per_s"]=(self.total[ids]/self.duration[ids].clamp_min(self._env.step_dt)).mean()
         log[f"Metrics/Mixed/{self.group}_reset_count"]=torch.tensor(float(len(ids)),device=self._env.device)
         means=(self.motion_integral[ids]/self.duration[ids,None].clamp_min(self._env.step_dt)).mean(0)
@@ -203,5 +319,5 @@ def mixed_flat_timeout(env,seconds=20.):
 
 def mixed_stair_base_low(env,minimum_height=.05):
     p=env.scene["robot"].data.root_pos_w.torch-env.scene.env_origins
-    terrain=stairs_terrain_height(env.cfg.stairs,p[:,0],p[:,1])
+    terrain=env_stair_terrain_height(env,p[:,0],p[:,1])
     return ((p[:,2]-terrain)<minimum_height) & mixed_masks(env)[1]

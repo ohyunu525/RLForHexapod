@@ -6,14 +6,17 @@ PythonPath is the original installed Isaac Lab venv's absolute python.exe path.
 This script and its src tree may live in an isolated runtime/worktree. PrepareOnly
 records the exact action and hashes without registering or starting a task.
 #>
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'WarmStart')]
 param(
     [Parameter(Mandatory = $true)][string]$PythonPath,
-    [Parameter(Mandatory = $true)][string]$Checkpoint,
+    [Parameter(Mandatory = $true, ParameterSetName = 'WarmStart')][string]$Checkpoint,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Resume')][string]$ResumeCheckpoint,
     [ValidateRange(1, 2147483647)][int]$NumEnvs = 5120,
     [ValidateRange(1, 2147483647)][int]$MaxIterations = 2000,
     [ValidateRange(0.0, 1.0)][double]$FlatFraction = 0.5,
     [ValidateRange(0.005, 0.16)][double]$StairHeight = 0.04,
+    [switch]$HeightCurriculum,
+    [switch]$RandomStairHeight,
     [ValidateRange(0.000001, 1.0)][double]$StairRewardScale = 0.1,
     [string]$Device = 'cuda:0',
     [ValidateRange(0, 2147483647)][int]$Seed = 42,
@@ -23,6 +26,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $sourceHash = '725c9696e82ef25e4b13e20c648562d17be6c79a6c1bc6ebd81936fbf2590527'
+$resume = $PSCmdlet.ParameterSetName -eq 'Resume'
 function File-Hash {
     param([string]$Path)
     $algorithm = [Security.Cryptography.SHA256]::Create(); $stream = [IO.File]::OpenRead($Path)
@@ -36,8 +40,11 @@ function Quote-Argument {
 Push-Location -LiteralPath $repoRoot
 try {
     $pythonExecutable = (Resolve-Path -LiteralPath $PythonPath).Path
-    $checkpointPath = (Resolve-Path -LiteralPath $Checkpoint).Path
-    if ((File-Hash $checkpointPath) -ne $sourceHash) { throw 'Source checkpoint differs from the verified final model_1999.' }
+    $checkpointInput = if ($resume) { $ResumeCheckpoint } else { $Checkpoint }
+    $checkpointFlag = if ($resume) { '-ResumeCheckpoint' } else { '-Checkpoint' }
+    $checkpointPath = (Resolve-Path -LiteralPath $checkpointInput).Path
+    $checkpointHash = File-Hash $checkpointPath
+    if (-not $resume -and $checkpointHash -ne $sourceHash) { throw 'Source checkpoint differs from the verified final model_1999.' }
     $userName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $runName = 'mixed_' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '_' + [Guid]::NewGuid().ToString('N').Substring(0,8)
     $taskName = 'RLForHexapod_' + $runName
@@ -49,9 +56,12 @@ try {
     $culture = [Globalization.CultureInfo]::InvariantCulture
     $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-WindowStyle','Hidden',
         '-File',(Join-Path $PSScriptRoot 'run_mixed_terrain.ps1'),'-PythonPath',$pythonExecutable,
-        '-Checkpoint',$checkpointPath,'-NumEnvs',$NumEnvs.ToString(),'-MaxIterations',$MaxIterations.ToString(),
+        $checkpointFlag,$checkpointPath,'-NumEnvs',$NumEnvs.ToString(),'-MaxIterations',$MaxIterations.ToString(),
         '-FlatFraction',$FlatFraction.ToString('R',$culture),'-StairHeight',$StairHeight.ToString('R',$culture),
         '-StairRewardScale',$StairRewardScale.ToString('R',$culture),'-Seed',$Seed.ToString(),'-Device',$Device,'-RunName',$runName)
+    if ($resume) { $arguments += @('-CheckpointSha256', $checkpointHash) }
+    if ($HeightCurriculum) { $arguments += '-HeightCurriculum' }
+    if ($RandomStairHeight) { $arguments += '-RandomStairHeight' }
     $nativeArguments = ($arguments | ForEach-Object { Quote-Argument $_ }) -join ' '
     $sourceFiles = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'src') -File -Recurse -Filter '*.py')
     $sourceFiles += @('train_mixed_terrain.py','mixed_actor_adapter.py','train_flat_wsp.py','run_mixed_terrain.ps1','submit_mixed_terrain.ps1','validate_robot_asset.py') | ForEach-Object { Get-Item -LiteralPath (Join-Path $PSScriptRoot $_) }
@@ -59,10 +69,11 @@ try {
     $receipt = [ordered]@{
         status='prepared';created_at=[DateTime]::UtcNow.ToString('o');task_name=$taskName;run_name=$runName
         user=$userName;logon_type='InteractiveToken';runtime_root=$repoRoot;python_executable=$pythonExecutable
-        python_sha256=(File-Hash $pythonExecutable);checkpoint=$checkpointPath;source_sha256=$sourceHash
+        python_sha256=(File-Hash $pythonExecutable);checkpoint=$checkpointPath;source_sha256=$checkpointHash;resume=$resume
         training_task='Hexapod-Mixed-Flat-Stair';experiment='hexapod_mixed_flat_stair'
         num_envs=$NumEnvs;max_iterations=$MaxIterations;flat_fraction=$FlatFraction;stair_height=$StairHeight
-        stair_reward_scale=$StairRewardScale;automatic_height_curriculum=$false;seed=$Seed;device=$Device
+        stair_reward_scale=$StairRewardScale;automatic_height_curriculum=[bool]$HeightCurriculum
+        random_stair_height=[bool]$RandomStairHeight;seed=$Seed;device=$Device
         executable=$powershell;arguments=$arguments;native_argument_string=$nativeArguments;code_provenance=$codeHashes
         launcher_directory=$launch;launcher_status=(Join-Path $launch 'launcher_status.json')
         training_stdout=(Join-Path $launch '02_train.stdout.log');training_stderr=(Join-Path $launch '02_train.stderr.log')
@@ -75,7 +86,7 @@ try {
         try {
             $scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect()
             $definition=$scheduler.NewTask(0)
-            $definition.RegistrationInfo.Description='One shared mixed flat/stair PPO run, verified actor adapter, persistent logs.'
+            $definition.RegistrationInfo.Description='One shared mixed flat/stair PPO run with persistent logs.'
             $definition.Principal.UserId=$userName;$definition.Principal.LogonType=3;$definition.Principal.RunLevel=0
             $definition.Settings.Enabled=$true;$definition.Settings.Hidden=$true;$definition.Settings.AllowDemandStart=$true
             $definition.Settings.StartWhenAvailable=$false;$definition.Settings.DisallowStartIfOnBatteries=$false

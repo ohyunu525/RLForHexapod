@@ -1,19 +1,16 @@
-"""One privileged 95-input actor, fixed flat/stair cohorts in identical worlds.
-
-Each world contains the same staircase. Flat robots use a distant floor lane;
-this is not automatic terrain detection or an evaluated flat-to-stair transition.
-The initial training stage is 40mm. Height changes are explicit new stages,
-never an undocumented automatic curriculum. Old task configurations are intact.
-"""
+"""One privileged 95-input actor for parallel flat and stair cohorts."""
 from copy import deepcopy
 import math
 
+from isaaclab.assets import RigidObjectCollectionCfg
 from isaaclab.managers import EventTermCfg as EventTerm, ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm, TerminationTermCfg as DoneTerm
 from isaaclab.utils.configclass import configclass
 
 import RLforHexapod.tasks.walk.mdp as mdp
 from RLforHexapod.assets import OBSTACLES_DIR
+from RLforHexapod.tasks.walk.mdp.mixed_stair_geometry import mixed_stair_blocks_cfg
+from RLforHexapod.tasks.walk.mdp.mixed_terrain import MIXED_CURRICULUM_HEIGHTS
 from .env_cfg import (HexapodEnvCfg, ObservationsCfg, StairsSceneCfg, EventsCfg,
                       StairsRewardsCfg, TerminationsCfg, StairsTerminationsCfg)
 from .walk_wsp_stop_env_cfg import WspStopRewardsCfg, WspStopCommandsCfg
@@ -87,8 +84,13 @@ class MixedTerminationsCfg:
 
 
 @configclass
+class MixedSceneCfg(StairsSceneCfg):
+    stair_blocks: RigidObjectCollectionCfg | None = None
+
+
+@configclass
 class HexapodMixedEnvCfg(HexapodEnvCfg):
-    scene:StairsSceneCfg=StairsSceneCfg(num_envs=4,env_spacing=12.)
+    scene:MixedSceneCfg=MixedSceneCfg(num_envs=4,env_spacing=12.)
     observations:MixedObservationsCfg=MixedObservationsCfg()
     events:MixedEventsCfg=MixedEventsCfg()
     rewards:MixedRewardsCfg=MixedRewardsCfg()
@@ -99,24 +101,45 @@ class HexapodMixedEnvCfg(HexapodEnvCfg):
     flat_fraction:float=.5
     stair_height:float=.04
     stair_reward_scale:float=.1
+    height_curriculum: bool = False
+    random_stair_height: bool = False
+    stair_curriculum_state: dict | None = None
 
     def __post_init__(self):
         super().__post_init__()
         self.episode_length_s=45.
         self.configure_mixed_terrain()
 
-    def configure_mixed_terrain(self,flat_fraction=None,stair_height=None,stair_reward_scale=None):
+    def configure_mixed_terrain(self, flat_fraction=None, stair_height=None, stair_reward_scale=None, *,
+                                height_curriculum=None, random_stair_height=None):
         """Call after CLI overrides and before creating the environment."""
         fraction=self.flat_fraction if flat_fraction is None else float(flat_fraction)
         height=self.stair_height if stair_height is None else float(stair_height)
         scale=self.stair_reward_scale if stair_reward_scale is None else float(stair_reward_scale)
         if not math.isfinite(fraction) or not 0<=fraction<=1:raise ValueError("flat_fraction outside[0,1]")
-        if not any(abs(height-h)<1e-9 for h in SUPPORTED_STAIR_HEIGHTS):raise ValueError("Unsupported fixed stair height")
+        curriculum = self.height_curriculum if height_curriculum is None else height_curriculum
+        random_height = self.random_stair_height if random_stair_height is None else random_stair_height
+        supported_heights = MIXED_CURRICULUM_HEIGHTS if curriculum else SUPPORTED_STAIR_HEIGHTS
+        selected_height = next((level for level in supported_heights if abs(height - level) < 1e-9), None)
+        if selected_height is None:
+            raise ValueError(f"stair_height must be one of {supported_heights} metres")
         if not math.isfinite(scale) or scale<=0:raise ValueError("stair_reward_scale must be positive")
-        self.flat_fraction,self.stair_height,self.stair_reward_scale=fraction,height,scale
-        self.stairs.step_height=height
-        self.scene.stairs.spawn.usd_path=str(OBSTACLES_DIR/f"stairs_{round(height*1000)}mm.usda")
-        self.scene.stairs.init_state.pos=(self.stairs.x0,0.,0.)
+        if curriculum or random_height:
+            flat_count = math.floor(self.scene.num_envs * fraction)
+            if not 0 < flat_count < self.scene.num_envs:
+                raise ValueError("Dynamic mixed training requires at least one flat and one stair environment")
+        self.flat_fraction,self.stair_height,self.stair_reward_scale=fraction,selected_height,scale
+        self.height_curriculum, self.random_stair_height = curriculum, random_height
+        self.stairs.step_height=selected_height
+        if curriculum or random_height:
+            self.scene.stairs = None
+            self.scene.stair_blocks = mixed_stair_blocks_cfg(self.stairs)
+        else:
+            if self.scene.stairs is None:
+                self.scene.stairs = StairsSceneCfg().stairs
+            self.scene.stair_blocks = None
+            self.scene.stairs.spawn.usd_path = str(OBSTACLES_DIR / f"stairs_{round(selected_height * 1000)}mm.usda")
+            self.scene.stairs.init_state.pos = (self.stairs.x0, 0., 0.)
         self.scene.env_spacing=12.
         self.rewards.stair.weight=scale
         return self

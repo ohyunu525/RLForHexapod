@@ -29,7 +29,7 @@ from isaaclab.managers import ManagerTermBase
 from isaaclab.utils.configclass import configclass
 from isaaclab.utils.math import quat_apply
 
-from .observations import stairs_terrain_height, tip_offsets
+from .observations import env_stair_terrain_height, stairs_approach_height, tip_offsets
 
 # ===== 다리 =====
 # 라이다 쪽이 앞(+x)이다 (scripts/postprocess_urdf.py에서 몸통을 180° 돌림)
@@ -169,7 +169,15 @@ class StairTracker:
 
     def riser_and_top(self, level):
         """이번에 오를 단의 수직면 x와 윗면 높이."""
-        return self.stairs.x0 + level * self.stairs.tread, (level + 1) * self.stairs.step_height
+        return self.stairs.x0 + level * self.stairs.tread, self._level_height(level + 1)
+
+    def _level_height(self, level):
+        step_height = getattr(self.env, "mixed_stair_heights", None)
+        if step_height is None:
+            return level * self.stairs.step_height
+        if level.ndim == 2:
+            step_height = step_height[:, None]
+        return stairs_approach_height(self.stairs, step_height) + level * step_height
 
     def moving_feet(self, phase):
         """지금 옮기는 발 (N, 6). 전진과 정지 중에는 없음."""
@@ -216,7 +224,7 @@ class StairTracker:
         settling = (self.move == self.settle_move) & self.active_mask
 
         knees, tips = self.knees_and_tips()
-        terrain = stairs_terrain_height(self.stairs, tips[..., 0], tips[..., 1])
+        terrain = env_stair_terrain_height(self.env, tips[..., 0], tips[..., 1])
         air_time = self.sensor.data.current_air_time.torch[:, self.sensor_ids]
         # 기존 센서의 여섯 발 접촉 판정. 힘의 방향이나 하중 지지 여부까지 보장하지는 않는다.
         feet_contact = air_time == 0
@@ -226,7 +234,20 @@ class StairTracker:
         # 현재 값 (보상 상한으로 자른 값)
         limit_x = riser + self.table_body_x[phase]
         capped_body_x = torch.minimum(body_x, limit_x)
-        capped_z = torch.minimum(tips[..., 2], (top + gait.tip_height + gait.raise_reward_cap).unsqueeze(1))
+        tip_z = tips[..., 2]
+        capped_z = torch.minimum(tip_z, (top + gait.tip_height + gait.raise_reward_cap).unsqueeze(1))
+        over_riser = tips[..., 0] >= (riser + gait.over_margin).unsqueeze(1)
+        step_height = getattr(self.env, "mixed_stair_heights", None)
+        if step_height is not None:
+            descending = step_height[:, None] < 0.0
+            tread_end = self.stairs.x0 + (self.stairs.num_steps - 1) * self.stairs.tread + self.stairs.top_length
+            in_descent_lane = ((tips[..., 0] >= self.stairs.approach_start) & (tips[..., 0] < tread_end)
+                               & (tips[..., 1].abs() <= self.stairs.width / 2))
+            # Reward lowering a moving foot toward the next tread after crossing its edge.
+            previous_tip = (top - step_height + gait.tip_height).unsqueeze(1)
+            target_tip = (top + gait.tip_height).unsqueeze(1)
+            lowering = -torch.maximum(tip_z, target_tip)
+            capped_z = torch.where(descending, torch.where(over_riser, lowering, -previous_tip), capped_z)
 
         # 앞다리를 수직면과 평행한 각도까지 돌린 비율 (0 = 기본 자세, 1 = 평행)
         fold = (self.asset.data.joint_pos.torch[:, self.front_coxa_ids] / self.front_parallel).clamp(max=1.0)
@@ -250,6 +271,8 @@ class StairTracker:
         knee_radius = (knees[..., :2] - center).norm(dim=-1)
         good_lift = (vertical >= gait.min_vertical) & (tip_radius >= knee_radius - gait.inward_tol)
         z_counts = moving & good_lift
+        if step_height is not None:
+            z_counts &= ~descending | (over_riser & in_descent_lane)
 
         # 보상 허용 조건이며 행동 차단이 아니다. 착지 전 전진은 발을 단 앞으로 보내는 데 필요하다.
         feet_up = ((tips[..., 2] >= top.unsqueeze(1)) | ~moving).all(1)
@@ -271,18 +294,22 @@ class StairTracker:
         # 단계 완료 조건
         # 과거에 목표에 닿았어도 다시 후퇴했다면 현재 단계 완료로 인정하지 않는다.
         advance_done = advancing & (body_x >= limit_x - gait.advance_tol)
-        over_riser = tips[..., 0] >= (riser + gait.over_margin).unsqueeze(1)
-        on_target = over_riser & (terrain >= top.unsqueeze(1) - 1e-3) & near_ground & feet_contact
+        target_surface = terrain >= top.unsqueeze(1) - 1e-3
+        if step_height is not None:
+            target_surface = torch.where(descending, (terrain <= top.unsqueeze(1) + 1e-3) & in_descent_lane,
+                                         target_surface)
+        on_target = over_riser & target_surface & near_ground & feet_contact
         move_done = moving_pair & (on_target | ~moving).all(1)
 
         # 발마다 단계당 1번: 단 끝에 처음 닿을 때, 단 위에 처음 놓을 때
-        tip_z = tips[..., 2]
         at_edge = (
             (tips[..., 0] >= (riser - gait.edge_reach).unsqueeze(1))
             & (tip_z >= top.unsqueeze(1))
             & (tip_z < (top + gait.tip_height + gait.contact_tol).unsqueeze(1))
             & (air_time == 0)
         )
+        if step_height is not None:
+            at_edge &= ~descending  # A descending riser has no face to touch from above.
         first_touch = at_edge & moving & ~self.foot_touched
         first_placed = on_target & moving & ~self.foot_placed
         self.new_touches = first_touch.sum(1).float()
@@ -292,8 +319,12 @@ class StairTracker:
 
         # MOVE 중에는 나머지 발의 위치와 접촉을 함께 검사한다.
         # ADVANCE는 발을 번갈아 들어야 하므로 기존 위치 조건만 유지한다.
-        placed_height = (level.unsqueeze(1) + self.table_placed[phase]) * self.stairs.step_height
-        position_ok = (terrain >= placed_height - 1e-3) & near_ground
+        placed_height = self._level_height(level.unsqueeze(1) + self.table_placed[phase])
+        support_surface = terrain >= placed_height - 1e-3
+        if step_height is not None:
+            support_surface = torch.where(descending, (terrain <= placed_height + 1e-3) & in_descent_lane,
+                                          support_surface)
+        position_ok = support_surface & near_ground
         contact_ok = feet_contact | (~moving_pair).unsqueeze(1)
         feet_kept = (position_ok & contact_ok) | moving
 
@@ -347,9 +378,10 @@ class StairTracker:
         self.move_ready_time = torch.where(self.just_done, torch.zeros_like(self.move_ready_time), self.move_ready_time)
 
         # 새 단계에 막 들어선 안정적인 상태 저장 → 리셋 때 시작 상태로 사용
-        save = self.just_done & (self.move < self.done_move) & (speed < gait.save_speed_max)
-        if save.any():
-            save_stair_states(self.env, save.nonzero().squeeze(-1), self.move[save], gait.buffer_size)
+        if step_height is None:
+            save = self.just_done & (self.move < self.done_move) & (speed < gait.save_speed_max)
+            if save.any():
+                save_stair_states(self.env, save.nonzero().squeeze(-1), self.move[save], gait.buffer_size)
 
     def reset(self, env_ids, moves):
         if isinstance(env_ids, slice):
@@ -468,6 +500,9 @@ def reset_stair_state(env, env_ids, x_ranges, buffer_ratio: float = 0.5):
         pose = asset.data.default_root_pose.torch[ids].clone()
         pose[:, :3] += env.scene.env_origins[ids]
         pose[:, 0] += lo + (hi - lo) * torch.rand(len(ids), device=env.device)
+        step_height = getattr(env, "mixed_stair_heights", None)
+        if step_height is not None:
+            pose[:, 2] += stairs_approach_height(env.cfg.stairs, step_height[ids])
         asset.write_root_pose_to_sim_index(root_pose=pose, env_ids=ids)
 
     J = asset.num_joints

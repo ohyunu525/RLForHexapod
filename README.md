@@ -1,5 +1,27 @@
 현재 완전체 로봇의 변환·검증·평지 학습 방법은 [완전체 로봇 평지 학습](docs/full_robot_walk.md)을 참고하세요.
 
+## 혼합 평지·계단 학습
+
+Isaac Lab이 설치된 Windows 머신에서 기존 혼합 PPO 체크포인트로 자동 커리큘럼을 시작합니다.
+
+```powershell
+.\scripts\run_mixed_terrain.ps1 -PythonPath $python -ResumeCheckpoint $mixedCheckpoint `
+    -HeightCurriculum -NumEnvs 5120 -MaxIterations 2000
+```
+
+`$python`에는 Isaac Lab 환경의 `python.exe` 경로를, `$mixedCheckpoint`에는 이전 혼합 학습에서 저장한 `model_*.pt` 경로를 지정합니다.
+actor, critic, 관측 정규화 통계, Adam 상태를 복원하고 다음 반복부터 `-MaxIterations`만큼 추가 학습합니다.
+`submit_mixed_terrain.ps1`에서도 같은 옵션으로 작업을 제출할 수 있습니다.
+실행 환경과 체크포인트 호환성만 확인하려면 `run_mixed_terrain.ps1`에 `-VerifyOnly`를 붙입니다.
+
+- `-HeightCurriculum`을 켜면 기본 4cm에서 시작해 6 → 8 → 12 → 16cm 순으로 진행합니다. 현재 높이에서 계단 앞부터 출발하는 에피소드를 시작할 때 100개까지 평가 대상으로 지정합니다. 100개가 모두 끝나고 80개 이상이 성공하면 승급합니다. 진행 중인 에피소드는 기존 높이를 유지하고 다음 리셋부터 새 높이를 적용합니다. 이어 학습할 때는 같은 옵션을 지정하면 체크포인트에 저장된 커리큘럼 진행 상태도 복원합니다.
+- `-RandomStairHeight`를 켜면 계단 리셋마다 단 높이를 −16cm에서 +16cm 사이에서 균등하게 뽑습니다. 양수는 오르막, 음수는 내리막입니다. 두 옵션을 함께 켜면 각 계단 리셋에서 50% 확률로 랜덤 높이를 사용하고, 나머지는 현재 커리큘럼 높이를 사용합니다. 승급은 커리큘럼 높이에서의 결과로 판단합니다.
+- 평지 비율은 기본 50%입니다. 높이 옵션을 사용할 때는 `-FlatFraction`을 조절해도 두 지형에 환경을 하나 이상씩 배정해야 합니다. 두 높이 옵션을 생략하면 기존 고정 계단 모드로 실행합니다.
+
+Python에서 직접 실행할 때는 `--resume-checkpoint`, `--height-curriculum`, `--random-stair-height`를 사용합니다. 높이 옵션을 끄려면 생략하거나 `--no-height-curriculum`, `--no-random-stair-height`를 지정합니다.
+
+## 계단 단독 task 개발 계획
+
 말씀하신 3개에 빠진 것들을 더해서, 의존 관계 순서대로 정리했습니다. **★**가 새로 추가한 항목입니다.
 
 ## A. 계단 teacher 만들기

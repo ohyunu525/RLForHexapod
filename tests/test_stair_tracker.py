@@ -38,7 +38,7 @@ def load_tracker():
     stubs["isaaclab.utils.math"].quat_apply = identity_quat_apply
     with patch.dict(sys.modules, stubs):
         modules = []
-        for stem in ("observations", "stair_reward"):
+        for stem in ("observations", "stair_reward", "mixed_stair_geometry"):
             name = f"_tracker_test_mdp.{stem}"
             spec = importlib.util.spec_from_file_location(name, MDP / f"{stem}.py")
             module = importlib.util.module_from_spec(spec)
@@ -48,7 +48,7 @@ def load_tracker():
     return modules
 
 
-observations, reward = load_tracker()
+observations, reward, geometry = load_tracker()
 
 
 def tensor_data(**values):
@@ -110,6 +110,58 @@ class Fixture:
 
 
 class StairTrackerTests(unittest.TestCase):
+    def test_mixed_geometry_updates_signed_treads_and_keeps_other_rows(self):
+        f = Fixture(count=3)
+        f.env.scene.env_origins[:, 2] = torch.tensor([2., 3., 4.])
+        writes = []
+        blocks = SimpleNamespace(
+            data=tensor_data(default_body_pose=torch.zeros(3, 4, 7)),
+            write_body_pose_to_sim_index=lambda **kwargs: writes.append(kwargs),
+        )
+        f.env.scene["stair_blocks"] = blocks
+        ids = torch.tensor([0, 2])
+        geometry.set_mixed_stair_heights(f.env, ids, torch.tensor([.04, -.16]))
+
+        torch.testing.assert_close(observations.env_stair_step_height(f.env), torch.tensor([.04, .16, -.16]))
+        x = torch.tensor([0., .55, .85, 1.15]).repeat(3, 1)
+        tops = observations.env_stair_terrain_height(f.env, x, torch.zeros_like(x))
+        torch.testing.assert_close(tops, torch.tensor([[0., .04, .08, .12],
+                                                      [0., .16, .32, .48],
+                                                      [.48, .32, .16, 0.]]))
+        torch.testing.assert_close(observations.env_stair_terrain_height(f.env, x, torch.full_like(x, 4.)),
+                                   torch.zeros_like(tops))
+        actual = writes[0]["body_poses"][..., 2] - f.env.scene.env_origins[ids, 2, None] + .25
+        torch.testing.assert_close(actual, torch.where(tops[ids] > 0, tops[ids], -.02))
+        torch.testing.assert_close(writes[0]["env_ids"], ids)
+
+    def test_descent_last_tread_requires_a_foot_inside_the_stair_lane(self):
+        move = 2 * reward.NUM_PHASES + 1
+        f = Fixture(move=move)
+        f.env.mixed_stair_heights = torch.tensor([-.16])
+        f.put_feet(range(6), x=.85, z=.173)
+        f.put_feet(reward.FRONT, x=1.15, z=.013)
+        f.data.body_pos_w.torch[:, reward.FRONT, 1] += .6
+        f.tick()
+        self.assertEqual(f.tracker.move.item(), move)
+        f.put_feet(reward.FRONT, x=1.15, z=.013)
+        f.tick()
+        self.assertEqual(f.tracker.move.item(), move + 1)
+
+    def test_descending_reset_spawns_robot_on_raised_approach(self):
+        f = Fixture(count=2)
+        f.env.mixed_stair_heights = torch.tensor([-.16, .04])
+        f.env.stair_tracker = f.tracker
+        f.env.scene.env_origins[:, 2] = torch.tensor([2., 3.])
+        robot = f.env.scene["robot"]
+        robot.num_joints = 2
+        robot.data.default_root_pose = SimpleNamespace(torch=f.data.root_pose_w.torch.clone())
+        writes = []
+        robot.write_root_pose_to_sim_index = lambda **kwargs: writes.append(kwargs)
+
+        reward.reset_stair_state(f.env, torch.arange(2), ((0., 0.),), buffer_ratio=0.)
+
+        torch.testing.assert_close(writes[0]["root_pose"][:, 2], torch.tensor([2.68, 3.2]))
+
     def test_pre_lift_forward_distance_is_never_paid_after_lifting(self):
         f = Fixture()
         f.tick()

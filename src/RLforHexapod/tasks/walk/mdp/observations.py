@@ -16,16 +16,45 @@ class StairsGeometryCfg:
     num_steps: int = 3
     top_length: float = 0.8    # 마지막 단(꼭대기) 깊이
     width: float = 1.0
+    approach_start: float = -1.5  # 하강 계단의 진입 발판 시작 위치
 
 
-def stairs_terrain_height(stairs: StairsGeometryCfg, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+def stairs_approach_height(stairs: StairsGeometryCfg, step_height: torch.Tensor) -> torch.Tensor:
+    """Raise the descending approach so the last tread meets the ground plane."""
+    return (-stairs.num_steps * step_height).clamp_min(0.0)
+
+
+def stairs_terrain_height(
+    stairs: StairsGeometryCfg, x: torch.Tensor, y: torch.Tensor, step_height: torch.Tensor | None = None
+) -> torch.Tensor:
     """env 원점 기준 (x, y) 지점의 지형 높이. 계단 밖은 바닥(0)."""
     xr = x - stairs.x0
     length = (stairs.num_steps - 1) * stairs.tread + stairs.top_length
-    on_stairs = (xr >= 0.0) & (xr < length) & (torch.abs(y) <= stairs.width / 2)
+    in_width = torch.abs(y) <= stairs.width / 2
+    on_stairs = (xr >= 0.0) & (xr < length) & in_width
     # i번째 단(0부터) 윗면 높이 = (i + 1) × 단 높이, 마지막 단은 top_length 끝까지
     k = torch.clamp(torch.floor(xr / stairs.tread) + 1, max=stairs.num_steps)
-    return torch.where(on_stairs, k * stairs.step_height, torch.zeros_like(xr))
+    if step_height is None:
+        return torch.where(on_stairs, k * stairs.step_height, torch.zeros_like(xr))
+    approach = stairs_approach_height(stairs, step_height)
+    on_approach = (x >= stairs.approach_start) & (xr < 0.0) & in_width
+    return torch.where(on_stairs, approach + k * step_height, torch.where(on_approach, approach, 0.0))
+
+
+def env_stair_terrain_height(env, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    """Analytical surface for full batches of local points in fixed or mixed scenes."""
+    heights = getattr(env, "mixed_stair_heights", None)
+    if heights is not None:
+        heights = heights.view((-1,) + (1,) * (x.ndim - 1))
+    return stairs_terrain_height(env.cfg.stairs, x, y, heights)
+
+
+def env_stair_step_height(env) -> torch.Tensor:
+    """Signed riser height for each environment in the policy batch."""
+    heights = getattr(env, "mixed_stair_heights", None)
+    if heights is None:
+        return torch.full((env.num_envs,), env.cfg.stairs.step_height, device=env.device)
+    return heights
 
 
 def stairs_next_riser_distance(stairs: StairsGeometryCfg, x: torch.Tensor, max_dist: float) -> torch.Tensor:

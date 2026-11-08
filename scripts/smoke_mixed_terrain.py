@@ -25,6 +25,8 @@ def main():
     parser.add_argument("--seed", type=int, default=73)
     parser.add_argument("--flat_fraction", type=float, default=.5)
     parser.add_argument("--stair_height", type=float, default=.04)
+    parser.add_argument("--height-curriculum", action="store_true")
+    parser.add_argument("--random-stair-height", action="store_true")
     parser.add_argument("--stair_reward_scale", type=float, default=.1)
     parser.add_argument("--checkpoint", type=Path, help="Optional original67-input actor; otherwise neutral actions")
     parser.add_argument("--report", type=Path, required=True)
@@ -48,11 +50,14 @@ def main():
         from isaaclab_tasks.utils import resolve_task_config
         import RLforHexapod.tasks  # noqa: F401
         from RLforHexapod.tasks.walk.mdp.mixed_terrain import mixed_masks
+        from RLforHexapod.tasks.walk.mdp.observations import env_stair_step_height, env_stair_terrain_height
 
         cfg, _ = resolve_task_config(TASK, "", overrides=[])
-        cfg.configure_mixed_terrain(flat_fraction=args.flat_fraction, stair_height=args.stair_height,
-                                    stair_reward_scale=args.stair_reward_scale)
         apply_env_overrides(args, cfg)
+        cfg.configure_mixed_terrain(flat_fraction=args.flat_fraction, stair_height=args.stair_height,
+                                    stair_reward_scale=args.stair_reward_scale,
+                                    height_curriculum=args.height_curriculum,
+                                    random_stair_height=args.random_stair_height)
         cfg.seed = args.seed
         args.device = cfg.sim.device
         torch.manual_seed(args.seed)
@@ -97,6 +102,11 @@ def main():
             assert bool(flat.any()) and bool(stair.any())
             assert not bool((flat & stair).any()) and bool((flat | stair).all())
             original_flat, original_stair = flat.clone(), stair.clone()
+            blocks = raw.scene["stair_blocks"] if args.height_curriculum or args.random_stair_height else None
+            if blocks is not None:
+                half_thickness = torch.tensor(
+                    [body.spawn.size[2] / 2 for body in blocks.cfg.rigid_objects.values()], device=raw.device
+                )
             local_pose = raw.scene["robot"].data.root_pose_w.torch[:, :3] - raw.scene.env_origins
             if not torch.allclose(local_pose[flat, 1], torch.full_like(local_pose[flat, 1], 4.), atol=1e-4):
                 raise RuntimeError("Flat cohort did not reset into its physically separated floor lane")
@@ -125,9 +135,16 @@ def main():
                     max_context = max(max_context, extra)
                     if extra > 1e-7:
                         raise RuntimeError("Flat cohort received nonzero privileged staircase context")
-                    if not torch.allclose(value[stair, 79], torch.full_like(value[stair, 79], args.stair_height),
+                    heights = env_stair_step_height(raw)
+                    if not torch.allclose(value[stair, 79], heights[stair],
                                           atol=1e-6, rtol=0):
                         raise RuntimeError("Physical staircase height and policy context differ")
+                    if blocks is not None:
+                        centers = blocks.data.body_link_pose_w.torch[..., :3] - raw.scene.env_origins[:, None, :]
+                        surface = env_stair_terrain_height(raw, centers[..., 0], centers[..., 1])
+                        block_tops = (centers[..., 2] + half_thickness).clamp_min(0.0)
+                        if not torch.allclose(block_tops[stair], surface[stair], atol=2e-5, rtol=0):
+                            raise RuntimeError("Simulator stair block tops and analytical surface differ")
                     commands = raw.command_manager.get_command("base_velocity")
                     if not torch.allclose(value[:, 45:48], commands, atol=1e-6, rtol=0):
                         raise RuntimeError("Policy input and live velocity command differ")
