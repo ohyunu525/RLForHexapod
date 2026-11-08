@@ -1,3 +1,5 @@
+import math
+
 import torch
 from isaaclab.managers import SceneEntityCfg, ManagerTermBase, RewardTermCfg
 from isaaclab.utils.math import quat_apply
@@ -75,4 +77,144 @@ class feet_clearance(ManagerTermBase):
         # 서 있으라는 명령(속도 ≈ 0)일 때는 보상 없음
         reward *= torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.1
         return reward
+
+
+def _wsp_distal_support(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg,
+                        force_threshold: float = 1.0, min_tip_height: float = -0.01,
+                        max_tip_height: float = 0.03) -> torch.Tensor:
+    """Flat-ground support proxy: upward tibia force AND distal tip near the floor.
+
+    A tibia sensor alone cannot distinguish knee/shaft contact from the foot.
+    The height condition rejects an elevated foot with a loaded knee, but this
+    remains a proxy rather than a contact-point or support-polygon measurement.
+    Both SceneEntityCfg selections must contain the same six legs in L1..L6 order.
+    """
+    asset = env.scene[asset_cfg.name]
+    sensor = env.scene.sensors[sensor_cfg.name]
+    force_z = sensor.data.net_forces_w.torch[:, sensor_cfg.body_ids, 2]
+    quat = asset.data.body_quat_w.torch[:, asset_cfg.body_ids]
+    if force_z.shape[1] != 6 or quat.shape[1] != 6:
+        raise ValueError("WSP support rewards require exactly six ordered tibia bodies")
+    # Three reward terms share this geometry; do not allocate/copy it every step.
+    names = tuple(asset.body_names[i] for i in asset_cfg.body_ids)
+    cache = getattr(env, "_wsp_tip_offset_cache", None)
+    if cache is None:
+        cache = env._wsp_tip_offset_cache = {}
+    key = (asset_cfg.name, names, str(quat.device), quat.dtype)
+    if key not in cache:
+        cache[key] = tip_offsets(list(names), quat.device).to(dtype=quat.dtype)
+    offsets = cache[key].expand(env.num_envs, -1, -1)
+    tip_z = (asset.data.body_pos_w.torch[:, asset_cfg.body_ids, 2]
+             + quat_apply(quat, offsets)[..., 2] - env.scene.env_origins[:, 2:3])
+    return ((force_z > force_threshold) & (tip_z >= min_tip_height) & (tip_z <= max_tip_height))
+
+
+def wsp_all_feet_airborne(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg,
+                          force_threshold: float = 1.0, min_tip_height: float = -0.01,
+                          max_tip_height: float = 0.03) -> torch.Tensor:
+    """Unit cost when no distal support is detected, including standing commands."""
+    support = _wsp_distal_support(env, sensor_cfg, asset_cfg, force_threshold, min_tip_height, max_tip_height)
+    return (~support.any(dim=1)).float()
+
+
+def wsp_support_deficit(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg,
+                        minimum_support: int = 3, force_threshold: float = 1.0,
+                        min_tip_height: float = -0.01, max_tip_height: float = 0.03) -> torch.Tensor:
+    """Bounded [0, 1] cost below three supporting feet; no bonus for six-foot lock."""
+    if not 1 <= minimum_support <= 6:
+        raise ValueError("minimum_support must be between one and six")
+    support = _wsp_distal_support(env, sensor_cfg, asset_cfg, force_threshold, min_tip_height, max_tip_height)
+    return ((minimum_support - support.sum(dim=1)).clamp_min(0).float() / minimum_support).square()
+
+
+class wsp_support_participation(ManagerTermBase):
+    """Penalize a leg that never supports OR never swings while commanded to move.
+
+    Each leg's support duty follows a time-based exponential window. No phase is
+    prescribed: tripod, ripple and other alternating gaits can satisfy the duty
+    band. Airborne and sparse-support terms separately reject synchronous hops.
+    Standing clears the moving-duty history and imposes no swing requirement.
+    The neutral initial duty prevents an artificial six-foot demand after reset.
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env):
+        super().__init__(cfg, env)
+        self._env = env
+        tau = cfg.params.get("time_constant_s", 0.6)
+        low, high = cfg.params.get("minimum_duty", 0.2), cfg.params.get("maximum_duty", 0.85)
+        if tau <= 0 or not 0 < low < high < 1:
+            raise ValueError("Require positive duty time constant and 0 < minimum_duty < maximum_duty < 1")
+        self.duty = torch.full((env.num_envs, 6), .5, device=env.device)
+        self._cached_cost = torch.zeros(env.num_envs, device=env.device)
+        self._last_step = None
+        self._support_time = torch.zeros_like(self.duty)
+        self._moving_support_time = torch.zeros_like(self.duty)
+        self._time = torch.zeros(env.num_envs, device=env.device)
+        self._moving_time = torch.zeros_like(self._time)
+        self._air_time = torch.zeros_like(self._time)
+        self._count_time = torch.zeros_like(self._time)
+        self._vz2_time = torch.zeros_like(self._time)
+        self._invalid_vz_time = torch.zeros_like(self._time)
+
+    def reset(self, env_ids=None):
+        ids = slice(None) if env_ids is None else env_ids
+        if self._time[ids].numel() == 0:
+            return
+        # _reset_idx creates extras['log'] immediately before RewardManager.reset.
+        # Writing here survives that clear; writing only in __call__ would not.
+        env = self._env
+        duration = self._time[ids].clamp_min(env.step_dt)
+        moving_duration = self._moving_time[ids].clamp_min(env.step_dt)
+        valid = (self._moving_time[ids] > 0).float()
+        moving_count = valid.sum().clamp_min(1.)
+        log = env.extras.setdefault("log", {})
+        for leg in range(6):
+            log[f"Metrics/WSP/support_duty_L{leg+1}"] = (self._support_time[ids, leg] / duration).mean()
+            log[f"Metrics/WSP/moving_support_duty_L{leg+1}"] = (
+                self._moving_support_time[ids, leg] / moving_duration * valid).sum() / moving_count
+        log["Metrics/WSP/all_air_fraction"] = (self._air_time[ids] / duration).mean()
+        log["Metrics/WSP/support_count"] = (self._count_time[ids] / duration).mean()
+        log["Metrics/WSP/vertical_velocity_rms"] = (self._vz2_time[ids] / duration).mean().sqrt()
+        log["Metrics/WSP/invalid_vertical_velocity_fraction"] = (self._invalid_vz_time[ids] / duration).mean()
+        log["Metrics/WSP/moving_fraction"] = (self._moving_time[ids] / duration).mean()
+        self.duty[ids] = .5
+        self._cached_cost[ids] = 0.
+        for buffer in (self._support_time, self._moving_support_time, self._time,
+                       self._moving_time, self._air_time, self._count_time, self._vz2_time, self._invalid_vz_time):
+            buffer[ids] = 0.
+
+    def __call__(self, env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg,
+                 command_name: str = "base_velocity", time_constant_s: float = 0.6,
+                 minimum_duty: float = 0.2, maximum_duty: float = 0.85,
+                 linear_command_threshold: float = 0.025, yaw_command_threshold: float = 0.1,
+                 force_threshold: float = 1.0, min_tip_height: float = -0.01,
+                 max_tip_height: float = 0.03) -> torch.Tensor:
+        # Diagnostic/repeated evaluation in one step must not age the window twice.
+        step = env.common_step_counter
+        if step == self._last_step:
+            return self._cached_cost
+        support = _wsp_distal_support(env, sensor_cfg, asset_cfg, force_threshold, min_tip_height, max_tip_height)
+        command = env.command_manager.get_command(command_name)
+        moving = ((command[:, :2].square().sum(dim=1) > linear_command_threshold**2)
+                  | (command[:, 2].abs() > yaw_command_threshold))
+        decay = math.exp(-env.step_dt / time_constant_s)
+        updated = decay * self.duty + (1 - decay) * support.float()
+        self.duty[:] = torch.where(moving[:, None], updated, .5)
+        missing_support = ((minimum_duty - self.duty).clamp_min(0) / minimum_duty).square()
+        missing_swing = ((self.duty - maximum_duty).clamp_min(0) / (1 - maximum_duty)).square()
+        per_leg = missing_support + missing_swing
+        # Mean alone lets one unused leg disappear among five useful legs.
+        self._cached_cost[:] = .5 * (per_leg.mean(dim=1) + per_leg.max(dim=1).values) * moving.float()
+        dt = env.step_dt
+        self._support_time += support.float() * dt
+        self._moving_support_time += (support & moving[:, None]).float() * dt
+        self._time += dt
+        self._moving_time += moving.float() * dt
+        self._air_time += (~support.any(dim=1)).float() * dt
+        self._count_time += support.sum(dim=1).float() * dt
+        vz2 = env.scene[asset_cfg.name].data.root_vel_w.torch[:, 2].square()
+        self._invalid_vz_time += (~torch.isfinite(vz2)).float() * dt
+        self._vz2_time += torch.nan_to_num(vz2, nan=0., posinf=0., neginf=0.) * dt
+        self._last_step = step
+        return self._cached_cost
 

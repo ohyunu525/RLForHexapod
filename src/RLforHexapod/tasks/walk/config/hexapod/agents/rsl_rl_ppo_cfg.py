@@ -46,3 +46,22 @@ class HexapodStairPPORunnerCfg(HexapodStatePPORunnerCfg):
     """계단 teacher: 설정은 걷기와 같고 로그 폴더만 나눈다. 2026-11-07 이전 계단 로그는 hexapod_walk 폴더에 있다."""
 
     experiment_name = "hexapod_stair"
+
+
+@configclass
+class HexapodWspPPORunnerCfg(HexapodStatePPORunnerCfg):
+    """Conservative starting settings for WSP actor warm-start, not tuned guarantees."""
+
+    experiment_name = "hexapod_walk_wsp"
+    max_iterations = 3000
+    actor = RslRlMLPModelCfg(
+        hidden_dims=[256, 256, 128], activation="elu", obs_normalization=True,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(
+            init_std=0.1, std_type="log", std_range=(0.05, 0.2)),
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0, use_clipped_value_loss=True, clip_param=0.15,
+        entropy_coef=0.002, num_learning_epochs=5, num_mini_batches=8,
+        learning_rate=1.0e-4, schedule="fixed", gamma=0.995, lam=0.95,
+        desired_kl=0.01, max_grad_norm=1.0,
+    )
