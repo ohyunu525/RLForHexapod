@@ -24,6 +24,44 @@ TIBIA_BODIES = ["tibia", *[f"tibia_{leg}" for leg in range(2, 7)]]
 PROBE_TERM = "flat_wsp_capture_before_reset"
 
 
+def command_schedule(steps, dt, vx, vy, yaw_rate, height, stop_after=None):
+    """Define action-time phases; the stop command is consumed on stop_step."""
+    moving = {"vx": vx, "vy": vy, "yaw_rate": yaw_rate, "height": height}
+    if stop_after is None:
+        return {"kind": "fixed", "stop_step": None, "stop_after_s": None,
+                "phases": [{"name": "fixed", "start_step": 0, "end_step": steps, "command": moving}]}
+    if not np.isfinite(dt) or dt <= 0 or not np.isfinite(stop_after) or stop_after <= 0:
+        raise ValueError("stop-after and control dt must be positive and finite")
+    stop_step = round(stop_after / dt)
+    if not np.isclose(stop_step * dt, stop_after, rtol=0, atol=1e-8):
+        raise ValueError("stop-after must align with an exact control-step boundary")
+    if not 0 < stop_step < steps or vx == vy == yaw_rate == 0.0:
+        raise ValueError("Walk-to-stop evaluation requires nonzero initial velocity and samples in both phases")
+    stopped = {"vx": 0.0, "vy": 0.0, "yaw_rate": 0.0, "height": height}
+    return {"kind": "walk_then_stop", "stop_step": stop_step, "stop_after_s": stop_step * dt,
+            "phases": [{"name": "walk", "start_step": 0, "end_step": stop_step, "command": moving},
+                       {"name": "stopped", "start_step": stop_step, "end_step": steps, "command": stopped}]}
+
+
+def apply_stop_command(env):
+    """Change live/future commands and recompute policy input before inference.
+
+    Uses the installed Isaac Lab 3.0 UniformVelocityCommand buffers and the
+    observation manager's non-advancing refresh. No actor-input fields are
+    patched by hand, and no reset or physics step is inserted at the transition.
+    """
+    term = env.command_manager.get_term("base_velocity")
+    term.cfg.ranges.lin_vel_x = (0.0, 0.0)
+    term.cfg.ranges.lin_vel_y = (0.0, 0.0)
+    term.cfg.ranges.ang_vel_z = (0.0, 0.0)
+    term.cfg.heading_command = False
+    term.cfg.rel_standing_envs = 1.0
+    term.command.zero_()
+    term.is_standing_env.fill_(True)
+    term.is_heading_env.zero_()
+    return env.observation_manager.compute(update_history=False)
+
+
 def episode_segments(episode_id, env):
     """Yield contiguous episode spans without joining repeated IDs."""
     changes = np.flatnonzero(np.diff(episode_id[:, env]) != 0) + 1
@@ -118,6 +156,17 @@ def summarize_trace(trace, dt, vx, target_height, vy=0.0, yaw_rate=0.0):
     up = np.stack((2 * (x*z + y*w), 2 * (y*z - x*w), 1 - 2 * (x*x + y*y)), axis=-1)
     speed_by = (velocity[..., :3] * side).sum(-1)
     yaw_speed = (velocity[..., 3:6] * up).sum(-1)
+    # Recorded action-time targets take priority over legacy fixed CLI values.
+    # This prevents the stopped half from being scored against the walking vx.
+    commands = trace.get("command_target")
+    if commands is None:
+        commands = np.broadcast_to(np.array([vx, vy, yaw_rate]), pose.shape[:2] + (3,))
+    if commands.shape != pose.shape[:2] + (3,):
+        raise ValueError("Command targets must match time x environment x 3")
+    if "command_actual" in trace and not np.array_equal(commands, trace["command_actual"]):
+        raise ValueError("Actual commands differ from the recorded schedule")
+    if "command_actual" in trace and not np.array_equal(trace["command_actual"], trace["obs"][..., 45:48]):
+        raise ValueError("Actor observations differ from the recorded actual commands")
     tip_relative = trace["foot_tip_pos_w"] - pose[..., None, :3]
     tip_forward = (tip_relative * forward[..., None, :]).sum(-1)
     tip_forward_excursion = episode_weighted_excursion(tip_forward, episode_id)
@@ -151,9 +200,9 @@ def summarize_trace(trace, dt, vx, target_height, vy=0.0, yaw_rate=0.0):
         "progress_world_x_m_per_env": delta_x.sum(0).tolist(),
         "mean_progress_speed_world_x_m_s": float(delta_x.sum() / (elapsed * envs)),
         "mean_forward_speed_body_m_s": float(speed_bx.mean()),
-        "forward_tracking_rmse_m_s": float(np.sqrt(np.mean((speed_bx - vx)**2))),
-        "xy_tracking_rmse_m_s": float(np.sqrt(np.mean((speed_bx - vx)**2 + (speed_by - vy)**2))),
-        "yaw_tracking_rmse_rad_s": float(np.sqrt(np.mean((yaw_speed - yaw_rate)**2))),
+        "forward_tracking_rmse_m_s": float(np.sqrt(np.mean((speed_bx - commands[..., 0])**2))),
+        "xy_tracking_rmse_m_s": float(np.sqrt(np.mean((speed_bx - commands[..., 0])**2 + (speed_by - commands[..., 1])**2))),
+        "yaw_tracking_rmse_rad_s": float(np.sqrt(np.mean((yaw_speed - commands[..., 2])**2))),
         "vertical_velocity_rms_m_s": float(np.sqrt(np.mean(velocity[..., 2]**2))),
         "roll_pitch_rate_world_rms_rad_s": float(np.sqrt(np.mean(np.sum(velocity[..., 3:5]**2, axis=-1)))),
         "tilt_rms_rad": float(np.sqrt(np.mean(tilt**2))),
@@ -186,7 +235,7 @@ class RolloutProbe:
         self.sensor_ids = None
         self.termination_counts = {}
 
-    def begin(self, env, obs, actions):
+    def begin(self, env, obs, actions, command=None, command_target=None):
         torch = self.torch
         if tuple(obs.shape) != (env.num_envs, 67) or tuple(actions.shape) != (env.num_envs, 18):
             raise ValueError("Policy must consume 67 observations and produce 18 actions")
@@ -203,6 +252,14 @@ class RolloutProbe:
             "pre_root_pose": env.scene["robot"].data.root_pose_w.torch.detach().cpu().numpy().copy(),
             "episode_id": self.episode_id.copy(),
         }
+        if command is not None or command_target is not None:
+            if command is None or command_target is None or tuple(command.shape) != (env.num_envs, 3):
+                raise ValueError("Both actual and target velocity commands must be provided")
+            target = command.new_tensor(command_target).expand_as(command)
+            if not torch.equal(command, target) or not torch.equal(obs[:, 45:48], command):
+                raise ValueError("Live velocity command, schedule and actor input must match on the same step")
+            self.pending["command_actual"] = command.detach().cpu().numpy().copy()
+            self.pending["command_target"] = target.detach().cpu().numpy().copy()
 
     def capture(self, env):
         torch = self.torch
@@ -271,11 +328,14 @@ def parse_args():
     parser.add_argument("--vy", type=float, default=0.0)
     parser.add_argument("--yaw-rate", type=float, default=0.0)
     parser.add_argument("--height", type=float, default=.205)
+    parser.add_argument("--stop-after", type=float, help="Switch all velocity commands to zero at this action time (seconds)")
     add_launcher_args(parser)
     parser.set_defaults(device=None, visualizer=[])
     args = parser.parse_args()
     if args.num_envs < 1 or args.steps < 1 or args.seed < 0:
         parser.error("Positive steps/environments and nonnegative seed required")
+    if args.stop_after is not None and (not np.isfinite(args.stop_after) or args.stop_after <= 0):
+        parser.error("stop-after must be positive and finite")
     if not (-.1 <= args.vx <= .2 and -.1 <= args.vy <= .1 and -.5 <= args.yaw_rate <= .5
             and .17 <= args.height <= .24):
         parser.error("Use training-range vx [-.1,.2], vy [-.1,.1], yaw-rate [-.5,.5], height [.17,.24]")
@@ -341,6 +401,9 @@ def run(args, report):
                 raise ValueError("Capture must be the last termination callback")
             probe.body_ids = [list(robot.body_names).index(name) for name in TIBIA_BODIES]
             probe.sensor_ids = [list(sensor.body_names).index(name) for name in TIBIA_BODIES]
+            schedule = command_schedule(args.steps, raw.step_dt, args.vx, args.vy, args.yaw_rate,
+                                        args.height, getattr(args, "stop_after", None))
+            report["command_schedule"] = schedule
             obs, _ = env.reset(seed=args.seed)
             initial_state = {
                 "root_pose": robot.data.root_pose_w.torch.cpu().tolist(),
@@ -371,9 +434,14 @@ def run(args, report):
             })
             for step in range(args.steps):
                 with torch.inference_mode():
+                    if step == schedule["stop_step"]:
+                        obs = apply_stop_command(raw)
                     policy_obs = obs["policy"]
+                    stopping = schedule["stop_step"] is not None and step >= schedule["stop_step"]
+                    target = (0.0, 0.0, 0.0) if stopping else (args.vx, args.vy, args.yaw_rate)
                     actions = actor(policy_obs)
-                    probe.begin(raw, policy_obs, actions)
+                    probe.begin(raw, policy_obs, actions,
+                                raw.command_manager.get_command("base_velocity"), target)
                     before = len(probe.frames)
                     obs, _, _, _, _ = env.step(actions.clamp(-1., 1.))
                     if len(probe.frames) != before + 1 or probe.pending is not None:
@@ -391,11 +459,23 @@ def run(args, report):
                     np.savez_compressed(stream, **trace, joint_names=np.array(JOINT_NAMES),
                                         checkpoint_sha256=np.array(report["checkpoint_sha256"]),
                                         source_sha256=np.array(report["checkpoint_sha256"]),
+                                        command_schedule_json=np.array(json.dumps(report["command_schedule"], sort_keys=True)),
                                         normalization_epsilon=np.array(0.01))
                 report["trace"] = str(args.trace.resolve())
                 report["trace_sha256"] = sha256(args.trace)
             report["metrics"] = summarize_trace(trace, report["step_dt_s"], args.vx, args.height,
                                                 args.vy, args.yaw_rate)
+            report["command_observation_verified"] = True
+            if report["command_schedule"]["kind"] == "walk_then_stop":
+                report["phase_metrics"] = {}
+                for phase in report["command_schedule"]["phases"]:
+                    start, end = phase["start_step"], min(phase["end_step"], len(trace["obs"]))
+                    if end <= start:
+                        continue
+                    phase_trace = {key: value[start:end] for key, value in trace.items()}
+                    target = phase["command"]
+                    report["phase_metrics"][phase["name"]] = summarize_trace(
+                        phase_trace, report["step_dt_s"], target["vx"], target["height"], target["vy"], target["yaw_rate"])
 
 
 def main():

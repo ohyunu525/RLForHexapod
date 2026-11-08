@@ -60,6 +60,91 @@ def make_probe():
 
 
 class FlatEvaluationTests(unittest.TestCase):
+    def test_stop_schedule_boundary_and_default_fixed_contract(self):
+        schedule = evaluation.command_schedule(1000, .02, .15, 0., 0., .205, 10.)
+        self.assertEqual(schedule["stop_step"], 500)
+        self.assertEqual(schedule["phases"][0]["end_step"], 500)
+        self.assertEqual(schedule["phases"][1]["start_step"], 500)
+        self.assertEqual(schedule["phases"][1]["command"], {"vx": 0., "vy": 0., "yaw_rate": 0., "height": .205})
+        fixed = evaluation.command_schedule(1000, .02, .15, 0., 0., .205)
+        self.assertEqual(fixed["kind"], "fixed")
+        self.assertIsNone(fixed["stop_step"])
+        for stop_after in (0., 20., 10.001, float("nan")):
+            with self.subTest(stop_after=stop_after), self.assertRaises(ValueError):
+                evaluation.command_schedule(1000, .02, .15, 0., 0., .205, stop_after)
+
+    def test_stop_refreshes_same_action_input_and_future_resamples_without_reset(self):
+        env = environment()
+        term = SimpleNamespace(
+            cfg=SimpleNamespace(ranges=SimpleNamespace(lin_vel_x=(.15, .15), lin_vel_y=(.04, .04),
+                                                       ang_vel_z=(.2, .2)),
+                                heading_command=True, rel_standing_envs=0.),
+            command=torch.tensor([[.15, .04, .2]]),
+            is_standing_env=torch.tensor([False]), is_heading_env=torch.tensor([True]))
+        env.command_manager = SimpleNamespace(get_term=lambda _: term)
+        prior_obs = torch.ones(1, 67)
+        prior_obs[:, 45:48] = term.command
+        history_flags = []
+
+        def observations(update_history):
+            history_flags.append(update_history)
+            fresh = prior_obs.clone()
+            fresh[:, 45:48] = term.command
+            return {"policy": fresh}
+
+        env.observation_manager = SimpleNamespace(compute=observations)
+        refreshed = evaluation.apply_stop_command(env)["policy"]
+        self.assertEqual(history_flags, [False])
+        self.assertTrue(torch.equal(refreshed[:, 45:48], torch.zeros(1, 3)))
+        self.assertTrue(torch.equal(prior_obs[:, 45:48], torch.tensor([[.15, .04, .2]])))
+        self.assertTrue(torch.equal(refreshed[:, 48:], prior_obs[:, 48:]))
+        self.assertTrue(term.is_standing_env.all())
+        self.assertFalse(term.is_heading_env.any())
+        self.assertFalse(term.cfg.heading_command)
+        self.assertEqual(term.cfg.rel_standing_envs, 1.)
+        # Future UniformVelocityCommand resampling reads these live ranges.
+        for index, name in enumerate(("lin_vel_x", "lin_vel_y", "ang_vel_z")):
+            bounds = getattr(term.cfg.ranges, name)
+            self.assertEqual(bounds, (0., 0.))
+            term.command[:, index].uniform_(*bounds)
+        probe = make_probe()
+        probe.begin(env, refreshed, torch.zeros(1, 18), term.command, (0., 0., 0.))
+        probe.capture(env)
+        trace = probe.arrays()
+        self.assertEqual(trace["episode_id"].tolist(), [[0]])
+        self.assertTrue(np.array_equal(trace["command_actual"], trace["obs"][..., 45:48]))
+        self.assertTrue(np.array_equal(trace["command_actual"], trace["command_target"]))
+
+    def test_stale_actor_command_is_rejected_before_physics(self):
+        env = environment()
+        probe = make_probe()
+        obs = torch.zeros(1, 67)
+        obs[:, 45] = .15
+        with self.assertRaisesRegex(ValueError, "same step"):
+            probe.begin(env, obs, torch.zeros(1, 18), torch.zeros(1, 3), (0., 0., 0.))
+        self.assertEqual(len(probe.frames), 0)
+
+    def test_transition_errors_use_each_actions_target_including_zero_stop_target(self):
+        env = environment()
+        probe = make_probe()
+        for target in ((.15, .04, .2), (.15, .04, .2), (0., 0., 0.), (0., 0., 0.)):
+            command = torch.tensor([target])
+            obs = torch.zeros(1, 67)
+            obs[:, 45:48] = command
+            probe.begin(env, obs, torch.zeros(1, 18), command, target)
+            env.scene["robot"].data.root_vel_w.torch[0] = torch.tensor([target[0], target[1], 0., 0., 0., target[2]])
+            probe.capture(env)
+        trace = probe.arrays()
+        result = evaluation.summarize_trace(trace, .02, .15, .205, .04, .2)
+        for key in ("forward_tracking_rmse_m_s", "xy_tracking_rmse_m_s", "yaw_tracking_rmse_rad_s"):
+            self.assertLess(result[key], 1e-7)
+        stopped = {key: value[2:] for key, value in trace.items()}
+        stopped_result = evaluation.summarize_trace(stopped, .02, .15, .205, .04, .2)
+        self.assertEqual(stopped_result["xy_tracking_rmse_m_s"], 0.)
+        trace["obs"][2, 0, 45] = .15
+        with self.assertRaisesRegex(ValueError, "Actor observations"):
+            evaluation.summarize_trace(trace, .02, .15, .205, .04, .2)
+
     def test_reset_jump_excluded_and_failure_frame_counted(self):
         env = environment()
         probe = make_probe()

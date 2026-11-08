@@ -224,3 +224,57 @@ powershell -ExecutionPolicy Bypass -File .\scripts\train_flat_wsp.ps1 -DryRun
 학습 로그는
 `logs/rsl_rl/hexapod_walk_wsp/2026-11-08_05-06-19_flat_wsp_20261108T050553006Z_3227f3f2_1b4725e0/`다.
 2,000회 전체 학습의 완료를 검증한 것은 아니다.
+
+## model_1999의 비틀림·정지 동작 보정
+
+`Hexapod-Walk-Refine`는 학습된 `model_1999.pt`에서 보상만 바꾸어 PPO를 이어 학습하는 별도 task다.
+추가 WSP 가중치 편집은 하지 않는다. actor MLP와 입력 정규화는 정확히 복사하며,
+변경된 보상에 맞추어 critic·optimizer·학습 회차는 초기화한다. 기존 WSP task와
+관측 67개·행동 18개·명령 범위·물리 설정은 유지한다.
+
+- `yaw_error_l2`: 몸통 좌표계의 실제 yaw 속도와 명령 yaw 속도 차이의 제곱, 가중치 -1.0.
+  회전 명령 자체를 억제하지 않으면서 회전속도의 진동과 추종 오차에 비용을 준다.
+- `stand_joint_velocity`: 정지 명령에서 평균 관절속도 제곱/9, 가중치 -0.2.
+  명령의 평면 속도가 0.025m/s 이하이고 yaw 속도가 0.1rad/s 이하일 때만 적용한다.
+  특정 휴식 자세는 강제하지 않으며, 높이 조절 중에는 기존 높이 보상과 이 움직임 비용이 함께 작용한다.
+
+기존 속도·높이·지지 참여·뜀 억제 보상 가중치는 그대로다. 기본 학습은 5,120환경·1,000회,
+고정 학습률 `5e-5`, PPO clip `0.1`, 탐색 std `0.08`(범위 0.03~0.15), entropy `0.001`이다.
+기본 초기 모델의 SHA-256을 고정해 잘못된 체크포인트로 시작하면 시뮬레이션 전에 중단한다.
+
+```powershell
+powershell -NoProfile -NoExit -ExecutionPolicy Bypass -File .\scripts\train_flat_refine.ps1 -NumEnvs 5120 -MaxIterations 1000
+```
+
+학습 로그는 `logs/rsl_rl/hexapod_walk_refine/`, 실행기 로그는 `outputs/flat_refine_launch/`에 생성된다.
+`Metrics/Refine/yaw_error_rms`, `stationary_joint_velocity_rms`, `stationary_fraction`을 기록한다.
+정지 관절속도 지표는 정지 명령 구간에만 해당하며, 학습 중 탐색 노이즈가 포함되어 있다.
+최종 동작 평가는 탐색 노이즈를 끈 같은 조건의 보행 기록으로 확인한다.
+
+## model_999의 정지·비틀림 WSP와 2,000회 학습
+
+`codex/wsp-999-stop-yaw`에서는 `model_999.pt`(SHA-256 `c8828d64d8f1257f9a140a3990cf1250c91c111d8afcb80f1aa4f2f66d648601`)를 원본으로 보존한다.
+`scripts/wsp_stop_refine.py`는 마지막 출력층의 선형 보정을,
+`scripts/wsp_stop_nonlinear.py`는 기존 MLP 마지막 두 층의 지도 목표 적합을 수행한다.
+후자는 닫힌 형태의 선형 해법이 아니다. 관측 정규화와 첫 두 은닉층을 고정하며,
+새 관측·런타임 명령 게이트·외부 보행 제어기는 추가하지 않는다.
+실제 기록의 앞 75%를 적합에 사용하고 뒤 25%는 보존 검사에만 쓴다.
+고정 입력에서의 출력 보존은 실제 보행 보존을 보장하지 않으므로 후보마다 물리 재생으로 확인한다.
+
+정지 목표는 높이에 따른 여섯 발 지지 자세다. 0.17·0.205·0.24m의 세 높이에서
+각각 4환경·20초 정적 자세 시험을 통과했고, 무릎/발끝 구조는 원래 URDF를 사용한다.
+학습 작업 `Hexapod-Walk-WspStop`은 정지 명령 확률 0.30, 정지 관절속도 비용 −1.0,
+정지 자세 비용 −0.25, 명령 yaw 오차 비용 −3.0, 수직속도 비용 −8.0을 사용한다.
+정지 자세 비용은 코드에 포함한 9개 높이 표를 보간하며 이동·회전 명령에는 적용하지 않는다.
+속도·높이·다리 지지 보상과 물리·67개 관측·18개 행동 계약은 유지한다.
+
+`scripts/submit_flat_wsp_stop.ps1`에 `-Checkpoint`, `-CheckpointSha256`, `-WspProvenance`를 지정하면
+기본 5,120환경·2,000회 PPO 학습을 한 번 제출한다. `-PrepareOnly`는 실행 계획만 기록한다.
+실행 전 원본/후보 해시와 실제 변경된 가중치 범위를 검증한다. actor와 정규화만 복사하고
+critic·optimizer·회차를 초기화한다. 학습률은 고정 `3e-5`, clip `0.1`, 초기 std `0.05`다.
+
+실제 제출은 로그인된 사용자의 숨겨진 Windows Task Scheduler 작업으로 실행하여 SSH와 분리한다.
+자동 재시작이나 반복 트리거는 없고, 제출 후 진행 상태를 폴링하지 않는다. 사용자는 로그인 상태를 유지해야 한다.
+자산 검사와 새 작업의 중립 동작 검사를 통과하면 단일 2,000회 학습이 시작되며 별도의 짧은 PPO 학습은 없다.
+제출 기록은 `outputs/flat_wsp_stop_submit/`, 실행 단계 로그는 `outputs/flat_wsp_stop_launch/`,
+학습 결과는 `logs/rsl_rl/hexapod_walk_wsp_stop/`에 남는다. 제출 확인은 학습 완료나 최종 보행 개선 검증과 구분한다.

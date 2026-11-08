@@ -23,6 +23,26 @@ gym.register(
 )
 
 gym.register(
+    id="Hexapod-Walk-Refine",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{_PACKAGE}.walk_refine_env_cfg:HexapodRefineEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_ppo_cfg:HexapodRefinePPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Hexapod-Walk-WspStop",
+    entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{_PACKAGE}.walk_wsp_stop_env_cfg:HexapodWspStopEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_ppo_cfg:HexapodWspStopPPORunnerCfg",
+    },
+)
+
+gym.register(
     id="Hexapod-Stair",
     entry_point=f"{_PACKAGE}.hexapod_env:HexapodEnv",
     disable_env_checker=True,

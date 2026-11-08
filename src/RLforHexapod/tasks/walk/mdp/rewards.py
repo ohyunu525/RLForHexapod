@@ -218,3 +218,162 @@ class wsp_support_participation(ManagerTermBase):
         self._last_step = step
         return self._cached_cost
 
+
+def _refine_stationary_command(env, command_name: str, linear_command_threshold: float,
+                               yaw_command_threshold: float) -> torch.Tensor:
+    """Gate by requested motion, never by actual speed that a policy could exploit."""
+    command = env.command_manager.get_command(command_name)
+    return ((command[:, :2].square().sum(dim=1) <= linear_command_threshold**2)
+            & (command[:, 2].abs() <= yaw_command_threshold))
+
+
+def refine_stand_joint_velocity_l2(
+    env, command_name: str = "base_velocity", velocity_scale: float = 3.0,
+    linear_command_threshold: float = 0.025, yaw_command_threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Cost of continuing to march after a stationary command, with no pose target.
+
+    Mean rather than sum keeps the scale independent of the 18-joint count.
+    A turn-in-place or translational command above the thresholds disables this
+    cost completely; the existing support rewards still protect walking legs.
+    No resting pose is prescribed. Height adjustment still trades this modest
+    motion cost against the unchanged height-tracking reward.
+    """
+    if velocity_scale <= 0:
+        raise ValueError("velocity_scale must be positive")
+    stationary = _refine_stationary_command(
+        env, command_name, linear_command_threshold, yaw_command_threshold)
+    velocity = env.scene[asset_cfg.name].data.joint_vel.torch
+    cost = velocity.square().mean(dim=1) / velocity_scale**2
+    return torch.where(stationary, cost, torch.zeros_like(cost))
+
+
+class refine_yaw_tracking_l2(ManagerTermBase):
+    """Yaw-rate error cost and episode diagnostics for the refinement task.
+
+    Body-frame yaw matches the existing angular tracking reward. Penalizing
+    error, rather than angular speed itself, permits the requested turns while
+    charging alternating positive/negative yaw error during straight walking.
+    Diagnostics stay on the device and are logged at RewardManager.reset, after
+    the environment clears extras['log']. No runtime phase or controller state
+    is added to observations or actions.
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env):
+        super().__init__(cfg, env)
+        self._env = env
+        self._last_step = None
+        self._cached_cost = torch.zeros(env.num_envs, device=env.device)
+        self._time = torch.zeros_like(self._cached_cost)
+        self._yaw_error2_time = torch.zeros_like(self._time)
+        self._stationary_time = torch.zeros_like(self._time)
+        self._stationary_joint_velocity2_time = torch.zeros_like(self._time)
+        self._invalid_time = torch.zeros_like(self._time)
+
+    def reset(self, env_ids=None):
+        ids = slice(None) if env_ids is None else env_ids
+        if self._time[ids].numel() == 0:
+            return
+        duration = self._time[ids].clamp_min(self._env.step_dt)
+        stationary_duration = self._stationary_time[ids].clamp_min(self._env.step_dt)
+        had_stationary_command = (self._stationary_time[ids] > 0).float()
+        count = had_stationary_command.sum().clamp_min(1.)
+        log = self._env.extras.setdefault("log", {})
+        log["Metrics/Refine/yaw_error_rms"] = (self._yaw_error2_time[ids] / duration).mean().sqrt()
+        log["Metrics/Refine/stationary_joint_velocity_rms"] = (
+            (self._stationary_joint_velocity2_time[ids] / stationary_duration
+             * had_stationary_command).sum() / count).sqrt()
+        log["Metrics/Refine/stationary_fraction"] = (self._stationary_time[ids] / duration).mean()
+        log["Metrics/Refine/invalid_state_fraction"] = (self._invalid_time[ids] / duration).mean()
+        for buffer in (self._cached_cost, self._time, self._yaw_error2_time, self._stationary_time,
+                       self._stationary_joint_velocity2_time, self._invalid_time):
+            buffer[ids] = 0.
+
+    def __call__(self, env, command_name: str = "base_velocity",
+                 linear_command_threshold: float = 0.025, yaw_command_threshold: float = 0.1,
+                 asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+        step = env.common_step_counter
+        if self._last_step == step:
+            return self._cached_cost
+        data = env.scene[asset_cfg.name].data
+        angular_velocity_w = data.root_vel_w.torch[:, 3:6]
+        local_up = torch.zeros_like(angular_velocity_w)
+        local_up[:, 2] = 1.
+        body_up_w = quat_apply(data.root_pose_w.torch[:, 3:7], local_up)
+        yaw_rate_b = (angular_velocity_w * body_up_w).sum(dim=1)
+        error = yaw_rate_b - env.command_manager.get_command(command_name)[:, 2]
+        self._cached_cost[:] = error.square()
+        stationary = _refine_stationary_command(
+            env, command_name, linear_command_threshold, yaw_command_threshold)
+        joint_velocity2 = data.joint_vel.torch.square().mean(dim=1)
+        dt = env.step_dt
+        self._time += dt
+        self._stationary_time += stationary.float() * dt
+        self._invalid_time += (~(torch.isfinite(self._cached_cost)
+                                & torch.isfinite(joint_velocity2))).float() * dt
+        self._yaw_error2_time += torch.nan_to_num(self._cached_cost, nan=0., posinf=0., neginf=0.) * dt
+        self._stationary_joint_velocity2_time += torch.where(
+            stationary, torch.nan_to_num(joint_velocity2, nan=0., posinf=0., neginf=0.),
+            torch.zeros_like(joint_velocity2)) * dt
+        self._last_step = step
+        return self._cached_cost
+
+
+class wsp_stop_stand_posture_l2(ManagerTermBase):
+    """Stationary-only deviation from an immutable height-conditioned rest table.
+
+    The table is cached on the simulation device once. It is a reward target,
+    never an action override. Moving commands receive exactly zero cost even
+    when their joint/height state is non-finite; invalid stationary state gets
+    a finite unit cost, while the existing physics termination handles it.
+    """
+
+    def __init__(self, cfg: RewardTermCfg, env):
+        super().__init__(cfg, env)
+        params = cfg.params
+        expected = tuple(f"L{leg}_{part}" for leg in range(1, 7) for part in ("coxa", "femur", "tibia"))
+        if tuple(params["anchor_joint_names"]) != expected:
+            raise ValueError("Posture anchors require exact L1..L6 coxa/femur/tibia joint order")
+        heights = torch.as_tensor(params["anchor_heights"], dtype=torch.float64)
+        anchors = torch.as_tensor(params["anchor_joint_positions_rad"], dtype=torch.float64)
+        if (heights.ndim != 1 or heights.numel() < 2 or anchors.shape != (heights.numel(), 18)
+                or not torch.isfinite(heights).all() or not torch.isfinite(anchors).all()
+                or not (heights[1:] > heights[:-1]).all()):
+            raise ValueError("Posture table must contain finite increasing heights and corresponding 18-joint rows")
+        asset_cfg = params["asset_cfg"]
+        self._asset = env.scene[asset_cfg.name]
+        joint_ids = asset_cfg.joint_ids
+        indices = (list(range(len(self._asset.joint_names)))[joint_ids] if isinstance(joint_ids, slice)
+                   else [int(index) for index in joint_ids])
+        if tuple(self._asset.joint_names[index] for index in indices) != expected:
+            raise ValueError("Resolved posture joint order differs from the anchor table")
+        self._joint_ids = torch.as_tensor(indices, dtype=torch.long, device=env.device)
+        dtype = self._asset.data.joint_pos.torch.dtype
+        self._height_min, self._height_max = float(heights[0]), float(heights[-1])
+        self._heights = heights.to(device=env.device, dtype=dtype).clone()
+        self._anchors = anchors.to(device=env.device, dtype=dtype).clone()
+
+    def __call__(self, env, anchor_heights, anchor_joint_positions_rad, anchor_joint_names,
+                 asset_cfg: SceneEntityCfg, command_name: str = "base_velocity",
+                 height_command_name: str = "base_height", angle_scale: float = 0.35,
+                 linear_command_threshold: float = 0.025, yaw_command_threshold: float = 0.1) -> torch.Tensor:
+        if not math.isfinite(angle_scale) or angle_scale <= 0:
+            raise ValueError("Posture angle_scale must be positive and finite")
+        height = env.command_manager.get_command(height_command_name)[:, 0]
+        q = self._asset.data.joint_pos.torch[:, self._joint_ids]
+        if q.shape != (env.num_envs, 18) or height.shape != (env.num_envs,):
+            raise ValueError("Posture reward requires 18 joint positions and one height command per environment")
+        valid = torch.isfinite(height) & torch.isfinite(q).all(dim=1)
+        h = torch.nan_to_num(height, nan=self._height_min, posinf=self._height_max, neginf=self._height_min)
+        h = h.clamp(self._height_min, self._height_max).contiguous()
+        upper = torch.searchsorted(self._heights, h, right=True).clamp(1, len(self._heights)-1)
+        lower = upper-1
+        blend = ((h-self._heights[lower]) / (self._heights[upper]-self._heights[lower]))[:, None]
+        target = self._anchors[lower] + blend*(self._anchors[upper]-self._anchors[lower])
+        cost = ((q-target)/angle_scale).square().mean(dim=1)
+        cost = torch.where(valid, torch.nan_to_num(cost, nan=1., posinf=1., neginf=1.), torch.ones_like(cost))
+        stationary = _refine_stationary_command(
+            env, command_name, linear_command_threshold, yaw_command_threshold)
+        return torch.where(stationary, cost, torch.zeros_like(cost))
+

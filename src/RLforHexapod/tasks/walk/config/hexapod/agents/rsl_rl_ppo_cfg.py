@@ -65,3 +65,41 @@ class HexapodWspPPORunnerCfg(HexapodStatePPORunnerCfg):
         learning_rate=1.0e-4, schedule="fixed", gamma=0.995, lam=0.95,
         desired_kl=0.01, max_grad_norm=1.0,
     )
+
+
+@configclass
+class HexapodRefinePPORunnerCfg(HexapodWspPPORunnerCfg):
+    """Small PPO updates from model_1999; fresh optimizer/value model on warm-start."""
+
+    experiment_name = "hexapod_walk_refine"
+    max_iterations = 1000
+    actor = RslRlMLPModelCfg(
+        hidden_dims=[256, 256, 128], activation="elu", obs_normalization=True,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(
+            init_std=0.08, std_type="log", std_range=(0.03, 0.15)),
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0, use_clipped_value_loss=True, clip_param=0.1,
+        entropy_coef=0.001, num_learning_epochs=5, num_mini_batches=8,
+        learning_rate=5.0e-5, schedule="fixed", gamma=0.995, lam=0.95,
+        desired_kl=0.01, max_grad_norm=1.0,
+    )
+
+
+@configclass
+class HexapodWspStopPPORunnerCfg(HexapodRefinePPORunnerCfg):
+    """Fresh PPO state from a verified WSP seed; lower exploration/update size."""
+
+    experiment_name = "hexapod_walk_wsp_stop"
+    max_iterations = 2000
+    actor = RslRlMLPModelCfg(
+        hidden_dims=[256, 256, 128], activation="elu", obs_normalization=True,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(
+            init_std=0.05, std_type="log", std_range=(0.02, 0.10)),
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0, use_clipped_value_loss=True, clip_param=0.1,
+        entropy_coef=0.0005, num_learning_epochs=5, num_mini_batches=8,
+        learning_rate=3.0e-5, schedule="fixed", gamma=0.995, lam=0.95,
+        desired_kl=0.01, max_grad_norm=1.0,
+    )

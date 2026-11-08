@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Validate the robot and warm-start a new PPO run from the experimental flat WSP actor.
+Validate the robot and warm-start a new PPO run from an exact saved actor.
 .EXAMPLE
 ./scripts/train_flat_wsp.ps1 -MaxIterations 3000 -NumEnvs 1024
 .EXAMPLE
@@ -23,6 +23,23 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$Checkpoint = 'outputs/flat_wsp/physical_20261108/tripod_probes/model_13250_wsp_tripod_compact_v2.pt',
 
+    [ValidateSet('Hexapod-Walk-WSP', 'Hexapod-Walk-Refine', 'Hexapod-Walk-WspStop')]
+    [string]$Task = 'Hexapod-Walk-WSP',
+
+    [Nullable[double]]$InitialStd = $null,
+
+    [ValidatePattern('^$|^[0-9a-fA-F]{64}$')]
+    [string]$CheckpointSha256 = '',
+
+    [string]$WspProvenance = '',
+
+    [ValidatePattern('^$|^[A-Za-z0-9_.-]+$')]
+    [string]$RunName = '',
+
+    [string]$UvPath = '',
+
+    [switch]$NoConsoleTail,
+
     [switch]$DryRun
 )
 
@@ -31,17 +48,31 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runStamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
 $runSuffix = [Guid]::NewGuid().ToString('N').Substring(0, 8)
-$runName = "flat_wsp_${runStamp}_${runSuffix}"
+$runPrefix = switch ($Task) {
+    'Hexapod-Walk-Refine' { 'flat_refine' }
+    'Hexapod-Walk-WspStop' { 'flat_wsp_stop' }
+    default { 'flat_wsp' }
+}
+if ($null -eq $InitialStd) {
+    $InitialStd = switch ($Task) {
+        'Hexapod-Walk-Refine' { 0.08 }
+        'Hexapod-Walk-WspStop' { 0.05 }
+        default { 0.10 }
+    }
+}
+if (-not $RunName) { $RunName = "${runPrefix}_${runStamp}_${runSuffix}" }
 $smokeReport = Join-Path $repoRoot "outputs\${runName}_smoke.json"
-$launchDirectory = Join-Path $repoRoot "outputs\flat_wsp_launch\$runName"
+$launchDirectory = Join-Path $repoRoot "outputs\${runPrefix}_launch\$runName"
 $statusPath = Join-Path $launchDirectory 'launcher_status.json'
 $uvExecutable = $null
 $script:activeWorker = $null
-$script:displayAvailable = $true
+$script:displayAvailable = -not $NoConsoleTail
 $launchState = [ordered]@{
     status = 'preparing'; run_name = $runName; started_at = [DateTime]::UtcNow.ToString('o')
     max_iterations = $MaxIterations; num_envs = $NumEnvs; seed = $Seed; device = $Device
-    checkpoint = $Checkpoint; steps = @(); active_process_id = $null
+    checkpoint = $Checkpoint; task = $Task; initial_std = $InitialStd
+    expected_source_sha256 = $CheckpointSha256; wsp_provenance = $WspProvenance
+    console_tail_enabled = -not $NoConsoleTail; steps = @(); active_process_id = $null
     cancellation_policy = 'Ctrl+C stops only the uv process tree launched by this script. Saved checkpoints remain. Abrupt OS termination may bypass cleanup; inspect the recorded PID before relaunching.'
 }
 
@@ -137,11 +168,16 @@ function Invoke-UvStep {
     Write-LauncherMessage "Worker PID $($step.process_id); logs: $stdoutPath and $stderrPath"
     [long]$outOffset = 0
     [long]$errOffset = 0
-    while (-not $script:activeWorker.HasExited) {
-        Show-NewLogTail $stdoutPath ([ref]$outOffset)
-        Show-NewLogTail $stderrPath ([ref]$errOffset)
-        Start-Sleep -Milliseconds 500
-        $script:activeWorker.Refresh()
+    if ($NoConsoleTail) {
+        # Detached jobs have persistent native handles and no progress monitor.
+        $script:activeWorker.WaitForExit()
+    } else {
+        while (-not $script:activeWorker.HasExited) {
+            Show-NewLogTail $stdoutPath ([ref]$outOffset)
+            Show-NewLogTail $stderrPath ([ref]$errOffset)
+            Start-Sleep -Milliseconds 500
+            $script:activeWorker.Refresh()
+        }
     }
     $script:activeWorker.WaitForExit()
     Show-NewLogTail $stdoutPath ([ref]$outOffset)
@@ -166,25 +202,57 @@ try {
         $null = New-Item -ItemType Directory -Path $launchDirectory
         Save-LauncherStatus
         Write-LauncherMessage "Launcher status and logs: $launchDirectory"
-        $uvExecutable = @(Get-Command uv -CommandType Application -ErrorAction Stop)[0].Source
+        $uvExecutable = if ($UvPath) { (Resolve-Path -LiteralPath $UvPath).Path } else {
+            @(Get-Command uv -CommandType Application -ErrorAction Stop)[0].Source
+        }
+    }
+    if ($Task -eq 'Hexapod-Walk-WspStop' -and (-not $CheckpointSha256 -or -not $WspProvenance)) {
+        throw 'WspStop requires an explicit checkpoint SHA-256 and WSP provenance JSON.'
+    }
+    if ($WspProvenance) {
+        $WspProvenance = (Resolve-Path -LiteralPath $WspProvenance).Path
+        $launchState.wsp_provenance = $WspProvenance
+    }
+    if ([double]::IsNaN($InitialStd) -or [double]::IsInfinity($InitialStd) -or $InitialStd -le 0 -or $InitialStd -gt 1) {
+        throw 'InitialStd must be finite and in (0, 1].'
     }
     if (-not (Test-Path -LiteralPath $Checkpoint -PathType Leaf)) {
-        throw "WSP checkpoint not found: $Checkpoint"
+        throw "Source checkpoint not found: $Checkpoint"
     }
     $checkpointPath = (Resolve-Path -LiteralPath $Checkpoint).Path
+    # Use the framework directly: inherited PSModulePath can hide Get-FileHash
+    # when Windows PowerShell 5.1 is started from a newer PowerShell host.
+    $hashAlgorithm = [Security.Cryptography.SHA256]::Create()
+    $checkpointStream = [IO.File]::OpenRead($checkpointPath)
+    try {
+        $sourceHash = [BitConverter]::ToString($hashAlgorithm.ComputeHash($checkpointStream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $checkpointStream.Dispose()
+        $hashAlgorithm.Dispose()
+    }
+    $launchState['source_sha256'] = $sourceHash
+    if ($CheckpointSha256 -and $sourceHash -ne $CheckpointSha256.ToLowerInvariant()) {
+        throw "Source checkpoint SHA-256 mismatch: expected $CheckpointSha256, got $sourceHash"
+    }
     Invoke-UvStep -Id '01_asset' -Label '[1/3] Validating the loaded robot asset' -CommandArguments @(
         'run', '--locked', 'python', '-X', 'utf8', '-u', 'scripts/validate_robot_asset.py', '--require-manifest'
     )
-    Invoke-UvStep -Id '02_smoke' -Label '[2/3] Checking neutral-action simulation' -CommandArguments @(
+    $smokeArguments = @(
         'run', '--locked', 'python', '-X', 'utf8', '-u', 'scripts/smoke_walk.py',
         '--device', $Device, '--viz', 'none', '--seed', $Seed.ToString(), '--report', $smokeReport
     )
-    Invoke-UvStep -Id '03_train' -Label '[3/3] Starting WSP actor training with fresh PPO state' -CommandArguments @(
+    if ($Task -eq 'Hexapod-Walk-WspStop') { $smokeArguments += @('--task', $Task) }
+    Invoke-UvStep -Id '02_smoke' -Label '[2/3] Checking neutral-action simulation' -CommandArguments $smokeArguments
+    $trainingArguments = @(
         'run', '--locked', 'python', '-X', 'utf8', '-u', 'scripts/train_flat_wsp.py',
+        '--task', $Task, '--initial_std', $InitialStd.ToString('R', [Globalization.CultureInfo]::InvariantCulture),
         '--checkpoint', $checkpointPath, '--num_envs', $NumEnvs.ToString(),
         '--device', $Device, '--viz', 'none', '--seed', $Seed.ToString(),
         '--max_iterations', $MaxIterations.ToString(), '--run_name', $runName
     )
+    if ($CheckpointSha256) { $trainingArguments += @('--checkpoint_sha256', $CheckpointSha256.ToLowerInvariant()) }
+    if ($WspProvenance) { $trainingArguments += @('--wsp_provenance', $WspProvenance) }
+    Invoke-UvStep -Id '03_train' -Label "[3/3] Starting $Task with exact actor and fresh PPO state" -CommandArguments $trainingArguments
     $launchState.status = 'completed'
 } catch {
     $launchState.status = 'failed'
