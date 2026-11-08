@@ -125,7 +125,7 @@ class RewardsCfg:
     # 0.5rad/s 명령에 회전하지 않으면 0.02
     track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_exp, params={"command_name": "base_velocity", "std": 0.25}, weight=0.5)
     # 명령 범위 0.07m에 맞춘 std: 4cm 어긋나면 0.02
-    track_base_height = RewTerm(func=mdp.track_base_height_exp, params={"command_name": "base_height", "std": 0.02}, weight=0.5)
+    track_base_height = RewTerm(func=mdp.track_base_height_exp, params={"command_name": "base_height", "std": 0.02}, weight=1.0)
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
@@ -151,8 +151,8 @@ class CommandCfg:
         heading_command=False,
         rel_standing_envs=0.1,  # 10%는 정지 명령: 계단 앞이나 꼭대기에서 멈추는 동작에 필요
         ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.2, 0.2),  # 뒤로 조금, 앞으로 0.2m/s까지
-            lin_vel_y=(-0.2, 0.2),  # 옆걸음: 계단 앞에서 좌우 위치 맞추기
+            lin_vel_x=(-0.5, 0.5),  # 뒤로 조금, 앞으로 0.5m/s까지
+            lin_vel_y=(-0.5, 0.5),  # 옆걸음: 계단 앞에서 좌우 위치 맞추기
             ang_vel_z=(-0.5, 0.5),  # 계단 앞에서 방향 맞추기
         ),
         debug_vis=True,
@@ -162,7 +162,7 @@ class CommandCfg:
     base_height = mdp.BaseHeightCommandCfg(
         asset_name="robot",
         resampling_time_range=(10.0, 10.0),
-        height_range=(0.17, 0.24),
+        height_range=(0.06, 0.24),
     )
 
 
