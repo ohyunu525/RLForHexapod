@@ -17,6 +17,8 @@ PRESETS = {
              "yaw_rate": (-0.75, 0.75), "command_interval": (3.0, 5.0)},
     "expert": {"lin_vel_x": (-0.2, 0.4), "lin_vel_y": (-0.2, 0.2),
                "yaw_rate": (-1.0, 1.0), "command_interval": (1.5, 3.0)},
+    "extreme": {"lin_vel_x": (-0.25, 0.50), "lin_vel_y": (-0.25, 0.25),
+                "yaw_rate": (-1.25, 1.25), "command_interval": (1.0, 2.0)},
 }
 RANGE_KEYS = ("lin_vel_x", "lin_vel_y", "yaw_rate", "command_interval")
 OPTION_KEYS = ("command_difficulty", *RANGE_KEYS, "standing_fraction")

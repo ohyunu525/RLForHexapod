@@ -94,6 +94,15 @@ class FlatCommandLauncherTests(unittest.TestCase):
         self.assertFalse(capture.exists())
         self.assertFalse((repo / "outputs").exists())
 
+    def test_dry_run_passes_extreme_difficulty_to_python(self):
+        _, capture, env, command = self.prepare("extreme dry run")
+        result = self.invoke(command + "-Difficulty extreme -DryRun", env)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        plan = json.loads(result.stdout.decode("utf-8-sig"))
+        args = plan["arguments"]
+        self.assertEqual(args[args.index("--command-difficulty") + 1], "extreme")
+        self.assertFalse(capture.exists())
+
     def test_native_arguments_preserve_ranges_culture_quotes_and_checkpoint(self):
         repo, capture, env, command = self.prepare("native custom settings")
         checkpoint = repo / "weights with spaces.pt"

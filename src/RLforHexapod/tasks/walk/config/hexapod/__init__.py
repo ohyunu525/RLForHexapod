@@ -59,7 +59,7 @@ gym.register(
     kwargs={
         # The dedicated training launcher applies the selected command ranges
         # to this fresh instance before creating the environment.
-        "env_cfg_entry_point": f"{_PACKAGE}.walk_wsp_stop_env_cfg:HexapodWspStopEnvCfg",
+        "env_cfg_entry_point": f"{_PACKAGE}.walk_wsp_stop_env_cfg:HexapodWalkCommandsEnvCfg",
         "rsl_rl_cfg_entry_point": f"{_PACKAGE}.agents.rsl_rl_ppo_cfg:HexapodCommandsPPORunnerCfg",
     },
 )

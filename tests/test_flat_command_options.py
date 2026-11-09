@@ -59,6 +59,17 @@ class FlatCommandOptionsTests(unittest.TestCase):
                 fresh = options.resolve_command_settings(arguments("--command-difficulty", name))
                 self.assertEqual(fresh["lin_vel_x"], list(expected["lin_vel_x"]))
 
+    def test_extreme_applies_the_highest_difficulty(self):
+        cfg = config()
+        settings = options.resolve_command_settings(arguments("--command-difficulty", "extreme"))
+        options.apply_command_settings(cfg, settings)
+        command = cfg.commands.base_velocity
+        self.assertEqual(command.ranges.lin_vel_x, (-.25, .50))
+        self.assertEqual(command.ranges.lin_vel_y, (-.25, .25))
+        self.assertEqual(command.ranges.ang_vel_z, (-1.25, 1.25))
+        self.assertEqual(command.resampling_time_range, (1., 2.))
+        self.assertEqual(command.rel_standing_envs, .30)
+
     def test_overrides_replace_only_requested_fields(self):
         result = options.resolve_command_settings(arguments(
             "--command-difficulty", "standard", "--lin-vel-x", "-.2", ".35",

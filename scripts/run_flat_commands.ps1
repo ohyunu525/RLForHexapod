@@ -13,7 +13,7 @@ param(
     [ValidateRange(1, 2147483647)][int]$MaxIterations = 2000,
     [ValidateNotNullOrEmpty()][string]$Device = 'cuda:0',
     [ValidateRange(0, 2147483647)][int]$Seed = 42,
-    [ValidateSet('standard', 'hard', 'expert')][string]$Difficulty = 'hard',
+    [ValidateSet('standard', 'hard', 'expert', 'extreme')][string]$Difficulty = 'hard',
     [double[]]$LinVelX,
     [double[]]$LinVelY,
     [double[]]$YawRate,

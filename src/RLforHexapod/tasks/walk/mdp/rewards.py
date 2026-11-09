@@ -95,7 +95,7 @@ def _wsp_distal_support(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityC
     quat = asset.data.body_quat_w.torch[:, asset_cfg.body_ids]
     if force_z.shape[1] != 6 or quat.shape[1] != 6:
         raise ValueError("WSP support rewards require exactly six ordered tibia bodies")
-    # Three reward terms share this geometry; do not allocate/copy it every step.
+    # Support rewards share this geometry; do not allocate/copy it every step.
     names = tuple(asset.body_names[i] for i in asset_cfg.body_ids)
     cache = getattr(env, "_wsp_tip_offset_cache", None)
     if cache is None:
@@ -115,6 +115,16 @@ def wsp_all_feet_airborne(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntit
     """Unit cost when no distal support is detected, including standing commands."""
     support = _wsp_distal_support(env, sensor_cfg, asset_cfg, force_threshold, min_tip_height, max_tip_height)
     return (~support.any(dim=1)).float()
+
+
+def wsp_stand_support_deficit(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg,
+                              command_name: str, force_threshold: float = 1.0, min_tip_height: float = -0.01,
+                              max_tip_height: float = 0.03) -> torch.Tensor:
+    """Unit cost if any foot lacks distal support during an exact zero-velocity command."""
+    command = env.command_manager.get_command(command_name)
+    standing = (command[:, :3] == 0.0).all(dim=1)
+    support = _wsp_distal_support(env, sensor_cfg, asset_cfg, force_threshold, min_tip_height, max_tip_height)
+    return (standing & ~support.all(dim=1)).float()
 
 
 def wsp_support_deficit(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg,

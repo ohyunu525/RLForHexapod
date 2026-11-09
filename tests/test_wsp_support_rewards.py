@@ -153,6 +153,20 @@ class WspSupportTests(unittest.TestCase):
         fixture.command[:, 0] = .15
         self.assertTrue(torch.equal(fixture.step(torch.ones(2, 6)), torch.zeros(2)))
 
+    def test_stand_support_requires_all_feet_only_at_exact_zero_command(self):
+        fixture = Fixture(count=7)
+        fixture.command.zero_()
+        fixture.command[4:] = torch.eye(3) * .001
+        contact = torch.ones(7, 6)
+        contact[1, -1] = 0  # Five feet supporting.
+        contact[2] = 0  # Fully airborne.
+        contact[4:] = 0  # Small forward, lateral, and yaw commands.
+        fixture.contact(contact)
+        fixture.positions[3, -1, 2] += .10  # Loaded tibia with elevated foot.
+
+        cost = reward.wsp_stand_support_deficit(fixture.env, command_name="base_velocity", **fixture.params)
+        torch.testing.assert_close(cost, torch.tensor([0., 1., 1., 1., 0., 0., 0.]))
+
     def test_partial_reset_logs_ended_episode_and_preserves_other_history(self):
         fixture = Fixture(count=2)
         for _ in range(100):
