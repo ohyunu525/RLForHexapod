@@ -106,6 +106,13 @@ class HexapodWspStopPPORunnerCfg(HexapodRefinePPORunnerCfg):
 
 
 @configclass
+class HexapodCommandsPPORunnerCfg(HexapodWspStopPPORunnerCfg):
+    """Flat command refinement from the pre-stair actor, with fresh PPO state."""
+
+    experiment_name = "hexapod_walk_commands"
+
+
+@configclass
 class HexapodMixedPPORunnerCfg(HexapodWspStopPPORunnerCfg):
     """Single shared 95-input policy for fixed-stage flat/stair batches."""
 

@@ -79,6 +79,7 @@ def mixed_curriculum_state(env):
 def _reset_mixed_stair_heights(env, stair_ids):
     curriculum = _mixed_curriculum(env)
     randomize = getattr(env.cfg, "random_stair_height", False)
+    full_start = torch.ones(len(stair_ids), dtype=torch.bool, device=env.device)
     if curriculum is None:
         heights = torch.empty(len(stair_ids), device=env.device).uniform_(
             -MAX_RANDOM_STAIR_HEIGHT, MAX_RANDOM_STAIR_HEIGHT
@@ -107,12 +108,19 @@ def _reset_mixed_stair_heights(env, stair_ids):
             fixed_ids = stair_ids[~randomized]
         available = curriculum.available_trials
         if available and len(fixed_ids):
+            enrolled_ids = fixed_ids
             if len(fixed_ids) > available:
                 sampled_ids = torch.randperm(len(fixed_ids), device=env.device)[:available]
-                fixed_ids = fixed_ids[sampled_ids]
-            trials[fixed_ids] = True
-            curriculum.pending += len(fixed_ids)
+                enrolled_ids = fixed_ids[sampled_ids]
+            trials[enrolled_ids] = True
+            curriculum.pending += len(enrolled_ids)
+        # Only fixed-height training episodes may start at the first foot lift.
+        # Enrolled trials and signed random terrain always start the full course.
+        full_start = trials[stair_ids]
+        if randomize:
+            full_start = full_start | randomized
     set_mixed_stair_heights(env, stair_ids, heights)
+    return stair_ids[full_start], stair_ids[~full_start]
 
 
 def mixed_masks(env):
@@ -152,10 +160,11 @@ def mixed_reset(env, env_ids, flat_lane_y=4., stair_x_ranges=((-0.1,0.1),(0.30,0
     if len(stair_ids):
         dynamic = getattr(env.cfg, "height_curriculum", False) or getattr(env.cfg, "random_stair_height", False)
         if dynamic:
-            _reset_mixed_stair_heights(env, stair_ids)
-            # Replay states belong to a particular geometry and skip some of
-            # the course. Dynamic episodes always start at the first approach.
-            reset_stair_state(env, stair_ids, stair_x_ranges[:1], buffer_ratio=0.0)
+            full_start_ids, training_ids = _reset_mixed_stair_heights(env, stair_ids)
+            reset_stair_state(env, full_start_ids, stair_x_ranges[:1], buffer_ratio=0.0)
+            # Use the authored approach and first-lift poses to expose training
+            # episodes to foot placement even before the approach gait improves.
+            reset_stair_state(env, training_ids, stair_x_ranges, buffer_ratio=0.0)
         else:
             reset_stair_state(env, stair_ids, stair_x_ranges, buffer_ratio)
 

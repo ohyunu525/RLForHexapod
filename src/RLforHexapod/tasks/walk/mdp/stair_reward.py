@@ -67,6 +67,7 @@ class StairGaitCfg:
 
     # 전진
     advance_tol: float = 0.01    # 전진 완료: 목표 x까지 남은 거리
+    front_approach_distance: float | None = None  # 앞발이 단에 접근하면 앞발 옮기기를 시작하는 거리 [m]
     backward_speed_tol: float = 0.05  # 이 속도 이하의 후진은 흔들림으로 보고 벌점 없음 [m/s]
 
     # 옮기기
@@ -338,6 +339,18 @@ class StairTracker:
         # 정지: 여섯 발이 꼭대기에 있고 몸통이 멈춤
         speed = self.asset.data.root_vel_w.torch.norm(dim=1)
         all_kept = feet_kept.all(1)
+        front_approach_done = torch.zeros_like(advance_done)
+        if gait.front_approach_distance is not None:
+            front_tips = tips[:, FRONT]
+            near_riser = (
+                (front_tips[..., 0] >= (riser - gait.front_approach_distance).unsqueeze(1))
+                & (front_tips[..., 1].abs() <= self.stairs.width / 2)
+            ).any(1)
+            # A leading front foot can reach the wall before the body target.
+            # Start lifting while the middle and rear feet still have support.
+            front_approach_done = (
+                in_stairs & (phase == 0) & near_riser & feet_kept[:, MIDDLE + REAR].all(1)
+            )
         steady = settling & all_kept & (air_time == 0).all(1) & (speed < gait.speed_tol)
         # 멈춘 상태가 끊기면 시간을 처음부터 다시 잰다
         self.steady_time = torch.where(steady, self.steady_time + self.env.step_dt, torch.zeros_like(self.steady_time))
@@ -352,7 +365,7 @@ class StairTracker:
             move_ready, self.move_ready_time + self.env.step_dt, torch.zeros_like(self.move_ready_time)
         )
         held_move_done = move_ready & (self.move_ready_time + 1e-6 >= gait.move_contact_hold_time)
-        self.just_done = ((advance_done & all_kept) | held_move_done | settle_done) & self.active_mask
+        self.just_done = ((advance_done & all_kept) | front_approach_done | held_move_done | settle_done) & self.active_mask
         if self.diagnostics_enabled:
             # env.step()은 곧 종료 환경을 자동 리셋한다. 현재 단계와 물리 상태를 여기서 복사한다.
             history = self.sensor.data.net_normal_forces_w_history.torch
@@ -366,6 +379,7 @@ class StairTracker:
                 "all_kept": all_kept,
                 "move_ready_time": self.move_ready_time,
                 "just_done": self.just_done,
+                "front_approach_done": front_approach_done,
                 "body_x": body_x,
                 "body_vx": self.asset.data.root_vel_w.torch[:, 0],
                 "feet_contact": feet_contact,

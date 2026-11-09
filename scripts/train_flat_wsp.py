@@ -23,6 +23,9 @@ from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "src"))
+COMMAND_TASK = "Hexapod-Walk-Commands"
 TASK = "Hexapod-Walk-WSP"
 EXPERIMENT = "hexapod_walk_wsp"
 CHECKPOINT = ROOT / "outputs/flat_wsp/physical_20261108/tripod_probes/model_13250_wsp_tripod_compact_v2.pt"
@@ -30,6 +33,8 @@ REFINE_CHECKPOINT = ROOT / "logs/rsl_rl/hexapod_walk_wsp/2026-11-08_05-09-04_fla
 REFINE_SHA256 = "e8a7da57b3fbcf7a9a2bc4569b1aa93653c0691525cb2f5f1c4cf1cad98b8734"
 WSP_STOP_PARENT = ROOT / "logs/rsl_rl/hexapod_walk_refine/2026-11-08_08-40-19_flat_refine_20261108T083955889Z_0af00a16_5f77c9f4/model_999.pt"
 WSP_STOP_PARENT_SHA256 = "c8828d64d8f1257f9a140a3990cf1250c91c111d8afcb80f1aa4f2f66d648601"
+PRE_STAIR_CHECKPOINT = ROOT / "logs/rsl_rl/hexapod_walk_wsp_stop/2026-11-08_11-11-43_flat_wsp_stop_20261108T111057433Z_9016d164_0fa08112/model_1999.pt"
+PRE_STAIR_SHA256 = "725c9696e82ef25e4b13e20c648562d17be6c79a6c1bc6ebd81936fbf2590527"
 STD_KEY = "distribution.log_std_param"
 NORMALIZATION_EPSILON = 0.01
 INITIAL_STD = 0.10
@@ -42,11 +47,16 @@ TASK_SETTINGS = {
     "Hexapod-Walk-WspStop": {"experiment": "hexapod_walk_wsp_stop", "checkpoint": None,
                              "checkpoint_sha256": None, "num_envs": 5120,
                              "max_iterations": 2000, "run_name": "flat_wsp_stop", "initial_std": 0.05},
+    COMMAND_TASK: {"experiment": "hexapod_walk_commands", "checkpoint": PRE_STAIR_CHECKPOINT,
+                   "checkpoint_sha256": PRE_STAIR_SHA256, "num_envs": 5120,
+                   "max_iterations": 2000, "run_name": "flat_commands", "initial_std": 0.05},
 }
 
 
 def apply_task_defaults(args):
     """Resolve explicit task defaults without silently selecting another source."""
+    from flat_command_options import resolve_command_settings
+
     if args.task not in TASK_SETTINGS:
         raise ValueError(f"Unsupported actor-only training task: {args.task}")
     settings = TASK_SETTINGS[args.task]
@@ -65,6 +75,7 @@ def apply_task_defaults(args):
     if args.task == "Hexapod-Walk-WspStop" and (args.checkpoint is None or args.checkpoint_sha256 is None
                                                or getattr(args, "wsp_provenance", None) is None):
         raise ValueError("WspStop requires explicit checkpoint, checkpoint_sha256 and wsp_provenance")
+    args.command_settings = resolve_command_settings(args)
     return args
 
 
@@ -200,6 +211,7 @@ def actor_only_warmstart(runner, checkpoint, expected_std=INITIAL_STD):
 
 
 def parse_args():
+    from flat_command_options import add_command_arguments
     import warp as wp
     wp.config.enable_backward = False
     from isaaclab.app import add_launcher_args
@@ -215,6 +227,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--run_name")
     parser.add_argument("--logger", choices=["tensorboard"], default="tensorboard")
+    parser.add_argument("--verify-only", action="store_true", help="Validate environment and actor initialization without PPO updates")
+    add_command_arguments(parser)
     add_launcher_args(parser)
     parser.set_defaults(device=None, visualizer=[])
     args = parser.parse_args()
@@ -234,6 +248,7 @@ def parse_args():
 
 
 def run(args):
+    from flat_command_options import apply_command_settings, resolve_command_settings
     import gymnasium as gym
     import torch
     from isaaclab.app import launch_simulation
@@ -249,6 +264,9 @@ def run(args):
     settings = TASK_SETTINGS[args.task]
     env_cfg, agent_cfg = resolve_task_config(args.task, "rsl_rl_cfg_entry_point", overrides=[])
     apply_env_overrides(args, env_cfg)
+    command_settings = resolve_command_settings(args)
+    if command_settings is not None:
+        apply_command_settings(env_cfg, command_settings)
     env_cfg.seed = args.seed
     args.device = env_cfg.sim.device
     agent_cfg.device = env_cfg.sim.device
@@ -287,6 +305,7 @@ def run(args):
               "source_sha256": source_hash, "max_iterations": args.max_iterations,
               "expected_source_sha256": args.checkpoint_sha256, "initial_exploration_std": args.initial_std,
               "started_at": datetime.now(timezone.utc).isoformat(), "seed": args.seed, "num_envs": args.num_envs}
+    status.update(command_settings=command_settings, verify_only=args.verify_only)
     status_path = log_dir / "training_status.json"
     print(f"{args.task} training log directory: {log_dir}", flush=True)
     write_run_manifest(str(log_dir), library="rsl_rl", task=args.task,
@@ -305,6 +324,7 @@ def run(args):
                 "task_default_exploration_std": configured_std, "initial_exploration_std": args.initial_std,
                 "initialization_method": "actor_mean_and_normalizer_only_no_weight_edit",
                 "source_wsp_lineage": lineage,
+                "command_settings": command_settings,
                 "created_at": datetime.now(timezone.utc).isoformat(), "rsl_rl_version": version,
                 "seed": args.seed, "num_envs": args.num_envs, "max_iterations": args.max_iterations,
                 "device": str(args.device), "logger": args.logger,
@@ -318,16 +338,21 @@ def run(args):
                 json.dump(proof, stream, indent=2, allow_nan=False)
                 stream.write("\n")
             dump_train_configs(str(log_dir), env_cfg, agent_cfg)
-            runner.add_git_repo_to_log(__file__)
-            status["status"] = "training"
-            status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+            if (ROOT / ".git").exists():
+                runner.add_git_repo_to_log(__file__)
             print(f"Loaded exact actor mean + normalizer; fresh critic, optimizer, iteration 0 and std {args.initial_std:.3f}.", flush=True)
-            runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=agent_cfg.init_at_random_ep_len)
-            status["status"] = "completed"
-            status["final_learning_iteration"] = runner.current_learning_iteration
-            status["saved_checkpoints"] = [str(path) for path in sorted(log_dir.glob("model_*.pt"))]
-            if not status["saved_checkpoints"]:
-                raise RuntimeError("Training returned without saving a checkpoint")
+            if args.verify_only:
+                status["status"] = "verified_initialization_without_ppo"
+                status["ppo_updates_performed"] = 0
+            else:
+                status["status"] = "training"
+                status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+                runner.learn(num_learning_iterations=args.max_iterations, init_at_random_ep_len=agent_cfg.init_at_random_ep_len)
+                status["status"] = "completed"
+                status["final_learning_iteration"] = runner.current_learning_iteration
+                status["saved_checkpoints"] = [str(path) for path in sorted(log_dir.glob("model_*.pt"))]
+                if not status["saved_checkpoints"]:
+                    raise RuntimeError("Training returned without saving a checkpoint")
     except (Exception, KeyboardInterrupt) as exc:
         status["status"] = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
         status["error"] = f"{type(exc).__name__}: {exc}"
@@ -345,7 +370,7 @@ def run(args):
         status_path.write_text(json.dumps(status, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     if not status["source_sha256_unchanged"]:
         raise RuntimeError("Source checkpoint changed during training")
-    print(f"{args.task} training completed: {log_dir}", flush=True)
+    print(f"{args.task} {status['status']}: {log_dir}", flush=True)
     return log_dir
 
 

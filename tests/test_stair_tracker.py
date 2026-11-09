@@ -110,6 +110,52 @@ class Fixture:
 
 
 class StairTrackerTests(unittest.TestCase):
+    def test_front_approach_starts_lift_before_the_body_reaches_its_target(self):
+        f = Fixture(move=0)
+        f.env.cfg.stair_gait.front_approach_distance = .04
+        f.data.root_pose_w.torch[:, 0] = .26
+        f.put_feet([reward.FRONT[0]], x=.465, z=.08)
+        f.air[:, reward.FRONT[0]] = .02
+        f.tick()
+        self.assertEqual(f.tracker.move.item(), 1)
+        self.assertTrue(f.tracker.just_done.item())
+        # Reaching the riser only opens the lift phase. Placement still requires
+        # both front feet to contact the actual upper tread.
+        f.tick()
+        self.assertEqual(f.tracker.move.item(), 1)
+
+    def test_front_approach_rejects_distant_or_lateral_feet_and_missing_support(self):
+        for condition in ("distant", "lateral", "rear_airborne"):
+            with self.subTest(condition=condition):
+                f = Fixture(move=0)
+                f.env.cfg.stair_gait.front_approach_distance = .04
+                f.data.root_pose_w.torch[:, 0] = .26
+                f.put_feet([reward.FRONT[0]], x=.465, z=.08)
+                if condition == "distant":
+                    f.put_feet([reward.FRONT[0]], x=.45, z=.08)
+                elif condition == "lateral":
+                    f.data.body_pos_w.torch[:, reward.FRONT[0], 1] += .6
+                else:
+                    f.put_feet([reward.REAR[0]], x=.1, z=.10)
+                f.tick()
+                self.assertEqual(f.tracker.move.item(), 0)
+
+    def test_front_approach_does_not_skip_the_final_advance(self):
+        f = Fixture(move=3 * reward.NUM_PHASES)
+        f.env.cfg.stair_gait.front_approach_distance = .04
+        f.data.root_pose_w.torch[:, 0] = 1.15
+        f.put_feet(range(6), x=1.2, z=.493)
+        f.put_feet([reward.FRONT[0]], x=1.365, z=.55)
+        f.tick()
+        self.assertEqual(f.tracker.move.item(), f.tracker.final_advance)
+
+    def test_legacy_body_target_remains_required_without_front_approach_option(self):
+        f = Fixture(move=0)
+        f.data.root_pose_w.torch[:, 0] = .26
+        f.put_feet(reward.FRONT, x=.465, z=.013)
+        f.tick()
+        self.assertEqual(f.tracker.move.item(), 0)
+
     def test_mixed_geometry_updates_signed_treads_and_keeps_other_rows(self):
         f = Fixture(count=3)
         f.env.scene.env_origins[:, 2] = torch.tensor([2., 3., 4.])

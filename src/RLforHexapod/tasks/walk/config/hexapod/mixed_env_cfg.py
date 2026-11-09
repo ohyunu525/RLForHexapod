@@ -108,6 +108,7 @@ class HexapodMixedEnvCfg(HexapodEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.episode_length_s=45.
+        self.stair_gait.front_approach_distance = 0.04
         self.configure_mixed_terrain()
 
     def configure_mixed_terrain(self, flat_fraction=None, stair_height=None, stair_reward_scale=None, *,

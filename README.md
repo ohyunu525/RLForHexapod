@@ -1,5 +1,42 @@
 현재 완전체 로봇의 변환·검증·평지 학습 방법은 [완전체 로봇 평지 학습](docs/full_robot_walk.md)을 참고하세요.
 
+## 평지 속도·방향 전환 강화 학습
+
+Isaac Lab이 설치된 Windows 머신에서 계단 학습 전의 평지 모델로 시작합니다.
+
+```powershell
+$python = (Resolve-Path .venv\Scripts\python.exe).Path
+.\scripts\run_flat_commands.ps1 -PythonPath $python -Difficulty hard `
+    -NumEnvs 5120 -MaxIterations 2000
+```
+
+기본 시작점은 `logs/rsl_rl/hexapod_walk_wsp_stop/2026-11-08_11-11-43_flat_wsp_stop_20261108T111057433Z_9016d164_0fa08112/model_1999.pt`입니다.
+SHA-256 `725c9696e82ef25e4b13e20c648562d17be6c79a6c1bc6ebd81936fbf2590527`을 확인한 뒤 기존 보행 정책과 관측 정규화 통계를 그대로 가져옵니다.
+변경된 명령 분포에 맞춰 critic·optimizer·탐색 표준편차는 새로 초기화하고 반복 번호 0부터 학습합니다. 관측 67개와 동작 18개는 유지합니다.
+다른 평지 모델을 시작점으로 사용하려면 `-Checkpoint <model_*.pt>`를 지정합니다. 95개 관측을 사용하는 혼합 모델은 이 평지 학습에 호환되지 않습니다.
+
+| `-Difficulty` | 전후진 속도 (m/s) | 좌우 속도 (m/s) | 회전 속도 (rad/s) | 명령 변경 간격 (초) |
+|---|---|---|---|---|
+| `standard` | −0.10 ~ 0.20 | −0.10 ~ 0.10 | −0.50 ~ 0.50 | 10 |
+| `hard` (기본) | −0.15 ~ 0.30 | −0.15 ~ 0.15 | −0.75 ~ 0.75 | 3 ~ 5 |
+| `expert` | −0.20 ~ 0.40 | −0.20 ~ 0.20 | −1.00 ~ 1.00 | 1.5 ~ 3 |
+
+각 간격마다 속도와 회전 명령을 범위 안에서 다시 무작위로 뽑습니다. 정지 명령 확률은 기본 30%이며, 몸통 높이 명령과 20초 에피소드 길이는 기존 평지와 같습니다.
+난이도는 명령의 속도와 변경 빈도로 조절합니다. 이 설정이 높은 속도에서의 보행 성공을 보장하지는 않습니다.
+개별 값을 지정하면 해당 항목만 프리셋 위에 덮어씁니다.
+
+```powershell
+.\scripts\run_flat_commands.ps1 -PythonPath $python -Difficulty hard `
+    -LinVelX @(-0.15, 0.35) -LinVelY @(-0.15, 0.15) `
+    -YawRate @(-0.9, 0.9) -CommandInterval @(2.0, 4.0) -StandingFraction 0.30
+```
+
+실행 계획만 확인하려면 `-DryRun`, 환경 생성과 정책 불러오기만 검증하려면 `-VerifyOnly -NumEnvs 64`를 붙입니다.
+학습 결과와 실제 명령 설정은 별도 `logs/rsl_rl/hexapod_walk_commands` 폴더의 `initialization.json`, `training_status.json`, 환경 설정 파일에 기록합니다.
+실행기는 출력과 오류를 `outputs/flat_commands_launch`에 저장하며, 진행 상황을 반복 조회하지 않습니다.
+Python 직접 실행은 `scripts/train_flat_wsp.py --task Hexapod-Walk-Commands --command-difficulty hard`를 사용합니다.
+개별 옵션은 `--lin-vel-x MIN MAX`, `--lin-vel-y MIN MAX`, `--yaw-rate MIN MAX`, `--command-interval MIN MAX`, `--standing-fraction`입니다.
+
 ## 혼합 평지·계단 학습
 
 Isaac Lab이 설치된 Windows 머신에서 기존 혼합 PPO 체크포인트로 자동 커리큘럼을 시작합니다.
@@ -17,6 +54,8 @@ actor, critic, 관측 정규화 통계, Adam 상태를 복원하고 다음 반�
 - `-HeightCurriculum`을 켜면 기본 4cm에서 시작해 6 → 8 → 12 → 16cm 순으로 진행합니다. 현재 높이에서 계단 앞부터 출발하는 에피소드를 시작할 때 100개까지 평가 대상으로 지정합니다. 100개가 모두 끝나고 80개 이상이 성공하면 승급합니다. 진행 중인 에피소드는 기존 높이를 유지하고 다음 리셋부터 새 높이를 적용합니다. 이어 학습할 때는 같은 옵션을 지정하면 체크포인트에 저장된 커리큘럼 진행 상태도 복원합니다.
 - `-RandomStairHeight`를 켜면 계단 리셋마다 단 높이를 −16cm에서 +16cm 사이에서 균등하게 뽑습니다. 양수는 오르막, 음수는 내리막입니다. 두 옵션을 함께 켜면 각 계단 리셋에서 50% 확률로 랜덤 높이를 사용하고, 나머지는 현재 커리큘럼 높이를 사용합니다. 승급은 커리큘럼 높이에서의 결과로 판단합니다.
 - 평지 비율은 기본 50%입니다. 높이 옵션을 사용할 때는 `-FlatFraction`을 조절해도 두 지형에 환경을 하나 이상씩 배정해야 합니다. 두 높이 옵션을 생략하면 기존 고정 계단 모드로 실행합니다.
+
+혼합 계단에서는 앞발이 다음 단의 모서리 4cm 이내에 접근하고 중간·뒷발의 지지 위치가 유지되면 앞발 들기 단계로 전환합니다. 커리큘럼 평가 대상 이외의 고정 높이 학습 에피소드는 먼 출발점과 첫 발 들기 출발점을 섞어 사용합니다. 승급 평가는 항상 먼 출발점에서 시작하며, 랜덤 높이 에피소드도 먼 출발점을 사용합니다.
 
 Python에서 직접 실행할 때는 `--resume-checkpoint`, `--height-curriculum`, `--random-stair-height`를 사용합니다. 높이 옵션을 끄려면 생략하거나 `--no-height-curriculum`, `--no-random-stair-height`를 지정합니다.
 

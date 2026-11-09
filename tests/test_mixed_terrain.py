@@ -203,7 +203,7 @@ class MixedTerrainTests(unittest.TestCase):
         manager = env.termination_manager
         with dynamic_reset_fixture(f):
             mixed.mixed_reset(env, slice(None))
-            self.assertEqual(f.tracker.move.tolist(), [0, 0, 0, 0])
+            self.assertTrue((f.tracker.move[env.mixed_stair_trial] == 0).all())
             self.assertEqual(f.data.root_pose_w.torch[0, 1].item(), 4.0)
             torch.testing.assert_close(env.mixed_stair_heights, torch.tensor([0.0, 0.12, 0.12, 0.12]))
             self.assertEqual(mixed.mixed_curriculum_state(env), env.cfg.stair_curriculum_state)
@@ -277,6 +277,38 @@ class MixedTerrainTests(unittest.TestCase):
                 else:
                     self.assertEqual(len(samples), 64)
                     self.assertIsNone(mixed.mixed_curriculum_state(env))
+
+    def test_training_starts_can_reach_first_lift_while_trials_and_random_starts_stay_full_course(self):
+        for random_height in (False, True):
+            with self.subTest(random_height=random_height), torch.random.fork_rng():
+                torch.manual_seed(12)
+                f = fixture(0.25)
+                env = f.env
+                env.cfg.height_curriculum = True
+                env.cfg.random_stair_height = random_height
+                env.cfg.stair_curriculum_state = {"stage": 0, "outcomes": [False] * 99}
+                assisted_starts = 0
+                with dynamic_reset_fixture(f):
+                    f.data.default_root_pose.torch[:, 0] = 0.0
+                    for _ in range(32):
+                        mixed.mixed_reset(env, slice(None))
+                        fixed = env.mixed_stair_heights == 0.04
+                        trial = env.mixed_stair_trial
+                        phase_one = f.tracker.move == 1
+                        self.assertTrue((f.tracker.move[trial] == 0).all())
+                        self.assertTrue((f.tracker.move[~fixed] == 0).all())
+                        self.assertFalse((phase_one & trial).any())
+                        self.assertFalse((phase_one & env.mixed_flat_mask).any())
+                        x = f.data.root_pose_w.torch[phase_one, 0]
+                        self.assertTrue(((x >= 0.30) & (x <= 0.32)).all())
+                        self.assertEqual(f.data.root_pose_w.torch[0, 1].item(), 4.0)
+                        assisted_starts += int(phase_one.sum())
+                    self.assertGreater(assisted_starts, 0)
+                    self.assertEqual(mixed.mixed_curriculum_state(env), env.cfg.stair_curriculum_state)
+
+                    # Evaluators can request full-course starts for every row.
+                    mixed.mixed_reset(env, slice(None), stair_x_ranges=((-0.1, 0.1),))
+                    self.assertTrue((f.tracker.move == 0).all())
 
     def test_fixed_stair_usd_and_analytic_surface_match(self):
         geometry=observations.StairsGeometryCfg()
