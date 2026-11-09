@@ -2,10 +2,10 @@
 
 단마다 PHASES 표의 단계를 순서대로 밟는다. 전부 오르면 마지막 전진 → 정지 → 성공.
 
-    전진 → 앞발 옮기기 → 중간발 옮기기 → 전진 → 뒷발 옮기기
+    전진 → 앞발 옮기기 → 중간발 옮기기 → 전진 → 뒤 오른발 옮기기 → 뒤 왼발 옮기기
 
     전진:   몸통 x가 목표에 도달하면 완료
-    옮기기: 두 발을 들어 앞으로 보내고, 올라갈 단 위에 내려놓으면 완료
+    옮기기: 정해진 발(앞·중간은 두 발, 뒤는 한 발씩)을 들어 앞으로 보내고, 올라갈 단 위에 내려놓으면 완료
 
 보상
     신기록 갱신량
@@ -44,7 +44,7 @@ ADVANCE, MOVE = 0, 1  # 전진, 옮기기
 
 class Phase(NamedTuple):
     kind: int
-    feet: tuple = ()         # 옮기는 쌍
+    feet: tuple = ()         # 옮기는 발 (한 발 또는 두 발)
     body_x: float = 0.0      # 몸통 x의 보상 상한이자 전진 단계의 목표 (이번에 오를 단의 수직면 기준 [m])
 
 
@@ -55,7 +55,10 @@ PHASES = [
     Phase(MOVE, MIDDLE, 0.05),
     # 뒷발을 들기 전에 무게중심을 중간발보다 앞으로 옮긴다
     Phase(ADVANCE, body_x=0.08),
-    Phase(MOVE, REAR, 0.20),
+    # 뒷발은 한 발씩: 나머지 뒷발이 받쳐 주어 지지 영역 뒤쪽 여유가 약 1cm에서 약 10cm가 된다
+    # 첫 발 동안은 바닥에 남은 뒷발이 더 뒤로 뻗지 못하므로 몸통을 더 밀지 않는다
+    Phase(MOVE, (REAR[0],), 0.08),
+    Phase(MOVE, (REAR[1],), 0.20),
 ]
 NUM_PHASES = len(PHASES)
 PHASE_OBS_SIZE = NUM_PHASES + 1  # 표의 단계 + 정지
@@ -116,7 +119,7 @@ class StairTracker:
         device, n, num_feet = env.device, env.num_envs, len(FOOT_BODIES)
         self.table_kind = torch.tensor([p.kind for p in PHASES], device=device)
         self.table_body_x = torch.tensor([p.body_x for p in PHASES], device=device)
-        self.table_rear_move = torch.tensor([p.feet == REAR for p in PHASES], device=device)
+        self.table_rear_move = torch.tensor([bool(p.feet) and set(p.feet) <= set(REAR) for p in PHASES], device=device)
         self.table_moving = torch.zeros(NUM_PHASES, num_feet, dtype=torch.bool, device=device)
         self.table_placed = torch.zeros(NUM_PHASES, num_feet, device=device)  # 이번 단에서 이미 올려놓은 발 (1 = 올려놓음)
         placed = []
@@ -125,7 +128,8 @@ class StairTracker:
             self.table_placed[k, placed] = 1.0
             if phase.kind == MOVE:
                 placed = placed + list(phase.feet)
-        self.table_feet = torch.tensor([p.feet if p.feet else (0, 0) for p in PHASES], device=device)
+        # 관측 크기를 고정하려고 항상 두 칸으로 맞춘다. 한 발만 옮기면 같은 발이 두 번, 옮기는 발이 없으면 (0, 0)
+        self.table_feet = torch.tensor([list((p.feet * 2)[:2]) if p.feet else [0, 0] for p in PHASES], device=device)
 
         # env별 상태
         self.move = torch.zeros(n, dtype=torch.long, device=device)
@@ -239,7 +243,7 @@ class StairTracker:
         good_lift = (vertical >= gait.min_vertical) & (tip_radius >= knee_radius - gait.inward_tol)
         z_counts = moving & good_lift
 
-        # 옮기는 중 몸통 x는 두 발이 단 높이 위에 있을 때만 인정한다 (들기 전에 전진하면 발이 수직면에 막힌다)
+        # 옮기는 중 몸통 x는 옮기는 발이 모두 단 높이 위에 있을 때만 인정한다 (들기 전에 전진하면 발이 수직면에 막힌다)
         feet_up = ((tips[..., 2] >= top.unsqueeze(1)) | ~moving).all(1)
         body_counts = advancing | (moving_pair & feet_up)
 
@@ -513,14 +517,14 @@ def stair_reached_top(env) -> torch.Tensor:
 
 # ===== 관측 =====
 def stair_phase_obs(env) -> torch.Tensor:
-    """지금 단계 one-hot (N, 6). 마지막 칸 = 정지."""
+    """지금 단계 one-hot (N, PHASE_OBS_SIZE). 마지막 칸 = 정지."""
     tracker = get_tracker(env)
     phase, _ = tracker.phase_and_level()
     return F.one_hot(torch.where(tracker.move >= tracker.settle_move, NUM_PHASES, phase), PHASE_OBS_SIZE).float()
 
 
 def stair_feet_target_obs(env) -> torch.Tensor:
-    """옮기는 두 발의 위치: 수직면 기준 x, 단 윗면 기준 z, tibia 수직도 (N, 6). 옮기는 발이 없으면 0."""
+    """옮기는 두 발의 위치: 수직면 기준 x, 단 윗면 기준 z, tibia 수직도 (N, 6). 옮기는 발이 없으면 0, 한 발이면 같은 값이 두 번."""
     tracker = get_tracker(env)
     phase, level = tracker.phase_and_level()
     riser, top = tracker.riser_and_top(level)

@@ -274,7 +274,7 @@ class StairsRewardsCfg:
 class StairsObservationsCfg(ObservationsCfg):
     @configclass
     class PolicyCfg(ObservationsCfg.PolicyCfg):
-        # 속도·높이 명령을 따르지 않으므로 뺀다 (관측 91차원 유지)
+        # 속도·높이 명령을 따르지 않으므로 뺀다
         command = None
         height_command = None
         # 계단 teacher 특권 관측
@@ -285,7 +285,7 @@ class StairsObservationsCfg(ObservationsCfg):
             "asset_cfg": SceneEntityCfg("robot", body_names="tibia.*"), "stairs": STAIRS})
         # 2. 단 높이 (1)
         step_height = ObsTerm(func=mdp.stairs_step_height, params={"stairs": STAIRS})
-        # 3. 지금 할 일: 단계 (6), 옮기는 발 위치와 tibia 수직도 (6), 전진 목표까지 거리와 방향 (3)
+        # 3. 지금 할 일: 단계 (7), 옮기는 발 위치와 tibia 수직도 (6), 전진 목표까지 거리와 방향 (3)
         phase = ObsTerm(func=mdp.stair_phase_obs)
         feet_target = ObsTerm(func=mdp.stair_feet_target_obs)
         body_target = ObsTerm(func=mdp.stair_body_target_obs)
@@ -307,7 +307,7 @@ class HexapodStairEnvCfg(HexapodEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        self.episode_length_s = 45.0  # 단마다 5단계 × 3단 + 마지막 전진, 정지
+        self.episode_length_s = 45.0  # 단마다 6단계 × 3단 + 마지막 전진, 정지
 
 
 # Student-cfg  ====================================================
